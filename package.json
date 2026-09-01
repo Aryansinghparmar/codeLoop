@@ -1,0 +1,24 @@
+{
+  "name": "codeloop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A safety-first terminal coding agent built in TypeScript.",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit",
+    "eval": "bun run src/evaluation/cli.ts",
+    "eval:context": "bun run src/evaluation/context-cli.ts",
+    "eval:live": "bun run src/evaluation/live-cli.ts",
+    "eval:repeat": "bun run src/evaluation/repeat-cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "latest",
+    "ink": "latest",
+    "react": "latest",
+    "typescript": "latest"
+  }
+}

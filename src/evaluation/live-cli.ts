@@ -1,0 +1,36 @@
+import { join } from 'node:path';
+import { createConfig } from '../config/config';
+import { loadEnvironment } from '../config/env';
+import { OpenAiResponsesProvider } from '../llm/openai/responses-provider';
+import { NvidiaNimChatProvider } from '../llm/nvidia/chat-provider';
+import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
+import { fixedTasks } from './fixed-tasks';
+import { EvaluationRunner } from './runner';
+import { report } from './report-generator';
+import { writeRawResults } from './result-writer';
+
+const root = process.cwd();
+loadEnvironment(root);
+if (process.env.CODELOOP_LIVE_CONFIRM !== 'yes') {
+  console.error('Live evaluation is disabled. Set CODELOOP_LIVE_CONFIRM=yes after you approve the possible API cost.');
+  process.exit(2);
+}
+
+const config = createConfig(root);
+const useOpenAi = process.env.CODELOOP_PROVIDER === 'openai';
+if (useOpenAi && !process.env.OPENAI_API_KEY) {
+  console.error('OPENAI_API_KEY is not set.');
+  process.exit(2);
+}
+if (!useOpenAi && !process.env.NVIDIA_API_KEY) {
+  console.error('NVIDIA_API_KEY is not set.');
+  process.exit(2);
+}
+
+const provider = useOpenAi ? new OpenAiResponsesProvider(config) : new NvidiaNimChatProvider(config);
+const requestedTasks = process.env.CODELOOP_LIVE_TASKS?.split(',').map((value) => value.trim()).filter(Boolean);
+const tasks = fixedTasks.filter((task) => task.live && (!requestedTasks?.length || requestedTasks.includes(task.id)));
+const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner());
+const summary = report(results);
+writeRawResults(join(root, 'evals', 'results', `live-${provider.name}.jsonl`), results);
+console.log(JSON.stringify({ provider: provider.name, summary, results }, null, 2));

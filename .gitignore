@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Internal planning & prompt docs (not for public)
+AGENT.md
+PREP_PROMPT.md
+
+# Interview preparation notes (private)
+preparation/
+
+# Evaluation results (local test data)
+evals/
+
+# Temporary / scratch files
+tmp/
+
+# Build output
+dist/
+
+# CodeLoop working directory
+.codeloop/
+
+# Lock files (Bun)
+bun.lock
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
