@@ -8,7 +8,7 @@ node_modules/
 
 # Internal planning & prompt docs (not for public)
 AGENT.md
-PREP_PROMPT.md
+PREP_PROMPT*.md
 
 # Interview preparation notes (private)
 preparation/
@@ -24,9 +24,6 @@ dist/
 
 # CodeLoop working directory
 .codeloop/
-
-# Lock files (Bun)
-bun.lock
 
 # OS / editor junk
 .DS_Store
