@@ -12,6 +12,7 @@ import type { ProcessRunner } from '../infrastructure/process/process-runner';
 import { redactSecrets } from '../shared/redact';
 import { runGraderTests, type GraderTestResult } from './grader';
 import { agentRanTests } from './trace-analysis';
+import { approveEvalRequest } from './approval';
 
 const offlineProcessRunner = {
   async run(): Promise<{ stdout: string; stderr: string; exitCode: number; signal: null; timedOut: false; durationMs: number }> {
@@ -52,7 +53,7 @@ export class EvaluationRunner {
         const builtins = createBuiltinRegistry(config, processRunner);
         const loop = new AgentLoop(config, provider, builtins.registry, builtins.pathGuard, builtins.permissionPolicy);
         const run = await loop.run(task.prompt, {
-          approve: async () => false,
+          approve: approveEvalRequest,
           onToolCall: (call) => trace.push(`call ${call.name} ${redactSecrets(JSON.stringify(call.arguments)).slice(0, 300)}`),
           onToolResult: (call, result) => trace.push(`${result.ok ? 'ok' : 'fail'} ${call.name}: ${redactSecrets(result.content).slice(0, 240)}`),
         });
