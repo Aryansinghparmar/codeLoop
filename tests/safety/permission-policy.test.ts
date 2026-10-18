@@ -45,6 +45,24 @@ const previouslyBypassed: Row[] = [
   ['gc .\\.e*', 'confirm'],
   ['Get-Content -Path .\\.e*', 'confirm'],
   ['[IO.File]::ReadAllText(".e"+"nv")', 'confirm'],
+  // Found by the final re-audit: low-9 quotes, and `git diff a b` outside a repo acts like --no-index.
+  ['git diff src/a.txt .en‚‚v', 'deny'],
+  ['git diff src/a.txt .en‛‛v', 'deny'],
+  ['git log -p -- .en„„v', 'deny'],
+  ['git show HEAD:.en‚‚v', 'deny'],
+  ['git diff src/a.txt .env', 'deny'],
+  ['git log -p -- .git/config', 'deny'],
+  ['git show HEAD:.env', 'deny'],
+  ['git diff src/a.txt README.md', 'allow'],
+  ['git log -n 5 -- src', 'allow'],
+  ['git show HEAD~2:src/existing.ts', 'allow'],
+  ['ls src tests', 'confirm'],
+];
+
+// POSIX shells treat a backslash as an escape, so `.e\nv` is `.env` there.
+const posixOnly: Row[] = [
+  ['git diff src/a.txt .e\\nv', 'deny'],
+  ['ls src\\', 'confirm'],
 ];
 
 const denied: Row[] = [
@@ -133,6 +151,10 @@ describe('permission policy', () => {
   });
 
   afterAll(async () => { await removeRoot(root); });
+
+  test.skipIf(process.platform === 'win32').each(posixOnly)('posix shell %p -> %s', (command, expected) => {
+    expect(policy.evaluate({ action: 'shell', target: command }).decision).toBe(expected);
+  });
 
   test.each([...previouslyBypassed, ...denied, ...confirmed, ...allowed])('shell %p -> %s', (command, expected) => {
     const result = policy.evaluate({ action: 'shell', target: command });

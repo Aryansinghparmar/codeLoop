@@ -80,7 +80,10 @@ export const SHELL_RULES: readonly PermissionRule[] = [
 const TIER_ORDER: readonly PermissionDecision[] = ['deny', 'confirm', 'allow'];
 
 // Shells drop these characters when they parse a word, so `.en''v`, `.e"n"v` and `.en^v` all mean `.env`.
-const SHELL_QUOTING = /['"`^‘’“”]/gu;
+// PowerShell also accepts the typographic quotes ‘ ’ ‚ ‛ “ ” „ ‟; POSIX shells treat `\` as an escape.
+const SHELL_QUOTING = process.platform === 'win32'
+  ? /['"`^‘-‟]/gu
+  : /['"`^\\‘-‟]/gu;
 const SECRET_RULE_IDS = new Set(['protected-file-reference', 'environment-variable', 'environment-dump']);
 
 export function classifyCommand(command: string): PermissionResult {
@@ -94,6 +97,10 @@ export function classifyCommand(command: string): PermissionResult {
   return { decision: 'confirm', reason: 'The command is not in the safe allow-list.', ruleId: 'default-confirm' };
 }
 
+// Allow-tier commands: ASCII letters, digits, spaces and path punctuation only. `\` is a path separator on
+// Windows but an escape character in POSIX shells, so it is only plain on Windows.
+const PLAIN_COMMAND = process.platform === 'win32' ? /^[A-Za-z0-9 _.\/\\:@=+,~-]+$/u : /^[A-Za-z0-9 _.\/:@=+,~-]+$/u;
+
 // Files that change how `bun`, `tsc` or CI run code: editing them is as powerful as running a command.
 const PROJECT_CONFIG = /^(?:.*\/)?(?:package\.json|bun\.lockb?|tsconfig[^/]*\.json|bunfig\.toml)$|^\.github\//iu;
 const SOURCE_DIRECTORY = /^(?:src|tests)\//u;
@@ -105,9 +112,34 @@ export class PermissionPolicy {
     if (request.action === 'shell') {
       const command = request.target.trim();
       if (!command) return { decision: 'deny', reason: 'The command is empty.', ruleId: 'empty-command' };
-      return classifyCommand(command);
+      const result = classifyCommand(command);
+      return result.decision === 'allow' ? this.checkAllowTier(command, result) : result;
     }
     return this.evaluateFile(request);
+  }
+
+  /**
+   * A command only runs without approval if it is plain text and every argument is a path PathGuard accepts.
+   * Regexes over raw text lose to shell quoting (`.en''v`, `.en‚‚v`, `.e\nv` all mean `.env`), so the allow tier
+   * refuses any character a shell could treat as quoting or escaping, and checks arguments as paths instead.
+   */
+  private checkAllowTier(command: string, result: PermissionResult): PermissionResult {
+    if (!PLAIN_COMMAND.test(command)) {
+      return { decision: 'confirm', reason: 'Only plain ASCII commands without quoting or escapes run without approval.', ruleId: 'allow-tier-not-plain' };
+    }
+    for (const argument of command.split(/\s+/u).slice(1)) {
+      if (argument.startsWith('-')) continue;
+      // `git show HEAD:path` names a file after the revision.
+      const path = argument.includes(':') ? argument.slice(argument.indexOf(':') + 1) : argument;
+      if (!path) continue;
+      try {
+        this.pathGuard.resolveInside(path);
+      } catch (error) {
+        const reason = error instanceof CodeLoopError ? error.message : 'The argument could not be validated as a path.';
+        return { decision: 'deny', reason: `${reason} (argument: ${argument})`, ruleId: 'allow-tier-path-guard' };
+      }
+    }
+    return result;
   }
 
   private evaluateFile(request: PermissionRequest): PermissionResult {
