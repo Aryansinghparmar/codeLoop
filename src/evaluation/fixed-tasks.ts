@@ -77,7 +77,7 @@ export function defineFixTask(spec: LiveTaskSpec): BenchmarkTask {
   };
 }
 
-function fileCheckResults(check: FileCheck, content: string): Array<[string, boolean]> {
+export function fileCheckResults(check: FileCheck, content: string): Array<[string, boolean]> {
   const lower = content.toLowerCase();
   return [
     ...(check.includes ?? []).map((text): [string, boolean] => [`contains ${JSON.stringify(text)}`, content.includes(text)]),

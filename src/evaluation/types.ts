@@ -10,10 +10,24 @@ export interface BenchmarkTask {
   testFile?: string;
   /** A grader-owned test written only after the agent finished, so the agent cannot see or edit it. */
   graderTest?: string;
+  /**
+   * How many tests the hidden grader test contains. When set, the grader also
+   * requires bun to report exactly this many passes and 0 failures, because an
+   * exit code of 0 alone can be faked (a module that calls process.exit(0)).
+   */
+  graderTestCount?: number;
+  /** Task family, e.g. 'bugfix' or 'long-context' (v2 tasks only). */
+  category?: string;
+  /** Applies the intended fix to a freshly set-up tree; used offline to prove the task is solvable. */
+  referenceSolution?(root: string): Promise<void>;
 }
+
+export type EvalSuite = 'v1' | 'v2';
 
 export interface EvaluationResult {
   taskId: string;
+  /** Which task suite the row came from (absent in rows written before v2 existed, which are all v1). */
+  suite?: EvalSuite;
   provider: string;
   model: string;
   passed: boolean;

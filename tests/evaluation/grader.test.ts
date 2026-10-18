@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createConfig } from '../../src/config/config';
 import { EvaluationRunner } from '../../src/evaluation/runner';
 import { fixedTasks } from '../../src/evaluation/fixed-tasks';
+import { reportsExactPasses } from '../../src/evaluation/grader';
 import { NativeProcessRunner } from '../../src/infrastructure/process/native-process-runner';
 import type { LlmProvider, LlmToolCall } from '../../src/llm/provider';
 import { ScriptedProvider } from '../../src/llm/scripted-provider';
@@ -47,5 +48,16 @@ describe('test-executing grader', () => {
     expect(result?.testsExecuted).toBe(false);
     expect(result?.testsPassed).toBeUndefined();
     expect(result?.assertionDetails).toContain('grader tests not executed (offline run)');
+  });
+});
+
+describe('grader pass count', () => {
+  test('requires exactly the expected passes and no failures', () => {
+    const summary = 'tests/grader-check.test.ts:\n(pass) a\n(pass) b\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.';
+    expect(reportsExactPasses(summary, 2)).toBe(true);
+    expect(reportsExactPasses(summary, 3)).toBe(false);
+    expect(reportsExactPasses(' 2 pass\n 1 fail\n', 2)).toBe(false);
+    // A module that calls process.exit(0) leaves no summary at all.
+    expect(reportsExactPasses('bun test v1.3.10\n', 2)).toBe(false);
   });
 });
