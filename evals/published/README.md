@@ -32,7 +32,7 @@ No API key or network access is needed.
 - **The tasks are small** (create a function with a test, fix a one-line bug, rename a symbol). This is a smoke-level reliability check, not a benchmark.
 - **Latency** is the wall-clock time of one agent run: model calls plus tool execution. It depends on the provider's load on that day.
 - **Cost** comes from a local price table (`src/llm/pricing.ts`), not from a bill.
-- **The slow tail in the second campaign comes from task T4** (a rename across two files). With no read-only search tool, the agent tries to find usages with shell pipelines; the policy refuses those, so it falls back to guessing file paths. A read-only grep/list tool is the obvious next step.
+- **The slowest runs in the second campaign are task T4** (a rename across two files): the max (77.4 s) and 3 of the 4 slowest. With no read-only search tool, the agent tries to find usages with shell pipelines; the policy refuses those, so it falls back to guessing file paths. A read-only grep/list tool is the obvious next step. The P95 sample (34.6 s) is a T10 run with 4 steps and no failed calls, so it most likely reflects provider latency.
 
 ## Provenance
 - These files are copies of the local result files. Local temp paths are replaced with `<tmp>/` and nothing else is changed. Scanned for keys, tokens and user paths before publishing.

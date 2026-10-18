@@ -4,10 +4,10 @@ Format: **what was wrong**, how it was found, what changed. Numbers and behaviou
 
 ## [Unreleased] — hardening pass after a self-audit
 
-I audited every claim the project makes against the code and the stored eval traces, wrote probe scripts for the suspicious ones, and fixed what they exposed. Each fix has a regression test that fails on the `cv-baseline` code.
+I audited every claim the project makes against the code and the stored eval traces, wrote probe scripts for the suspicious ones, and fixed what they exposed. Each code fix in the Safety, Tool harness, Agent loop and Evaluation sections has a regression test that fails on the code before the fix. A second audit of the hardened code found more; those fixes are under "Found by the second audit".
 
 ### Evaluation
-- **"Success" was a substring check, not a test run.** The trace audit showed the agent's own test command ran in only 7 of 30 live runs, and the grader never ran tests. The grader now runs `bun test` itself, plus a hidden check written only after the agent stops so it can't be gamed. The old substring result is kept as `assertionsPassed` so old and new can be compared.
+- **"Success" was a substring check, not a test run.** The trace audit showed the agent's own test command ran in only 7 of 30 live runs, and the grader never ran tests. The grader now runs `bun test` itself, plus a hidden check written only after the agent stops, which makes it harder to game. The old substring result is kept as `assertionsPassed` so old and new can be compared.
 - **The CV numbers couldn't be regenerated offline, and the summary JSON had been patched by hand.** Added `bun run eval:summarize`, which recomputes median/P95, the pass matrix, trace stats and a Clopper-Pearson lower bound from the raw JSONL. It never overwrites its inputs.
 - **The eval approver rejected every confirm-tier request** (54 rejections in the traces). It now approves exactly `bun test` with relative test paths and nothing else.
 - **A new paid run would have overwritten the baseline files.** Runs now go into new timestamped folders with relative paths, the real model name and the stat method.
@@ -19,7 +19,7 @@ I audited every claim the project makes against the code and the stored eval tra
 - **Protected-file rules could be bypassed** with a junction pointing at `.git`, or with `.env::$DATA` (an NTFS stream). Found by audit probes. Deny rules now also run on the `realpathSync.native` canonical path, and NTFS streams are rejected.
 - **`ls env:` / `dir env:` ran without asking and printed API keys.** Found by policy probes. Environment dumps and `$env:` references are now denied.
 - **Writing a test and then running `bun test` executed arbitrary code with no approval.** Commands that run project code (`bun test`, `bun run`, `node`, …) now need confirmation. Edits to project config files, and overwrites outside `src/` and `tests/`, are now a real confirm tier for file actions.
-- **`cat .env` only needed confirmation, while the read tool denied it.** Shell references to protected files are now denied, so both paths agree.
+- **`cat .env` only needed confirmation, while the read tool denied it.** Shell references to protected files are now denied, so both paths agree for literal names. Disguised names are handled by the second-audit fix below; wildcards like `.e*` need confirmation.
 - **Shell children inherited `OPENAI_API_KEY`.** The child environment is now an allowlist; key/token/secret/password names are always removed.
 - **A timeout killed only the shell, so a hung grandchild kept the call waiting** (30 s in the new test against the old runner). The whole process tree is now killed (`taskkill /T /F` on Windows, process group on POSIX).
 - The shell rules are now a named rule table, and each decision reports the `ruleId` that matched.
@@ -41,8 +41,14 @@ I audited every claim the project makes against the code and the stored eval tra
 - **Malformed tool-call JSON silently became `{}`.** The provider now flags it, and the loop tells the model its arguments were invalid instead of running the tool.
 
 ### LLM provider
-- **The Responses adapter had no retries, no backoff, no typed errors and zero tests.** It now uses the official `openai` SDK (retries on 408/409/429/5xx and connection errors; per-attempt timeout). Errors map to `PROVIDER_TIMEOUT` or `PROVIDER_ERROR` with the HTTP status. 14 offline tests run the real SDK client against a fake `fetch`.
+- **The Responses adapter had no retries, no backoff, no typed errors and zero tests.** It now uses the official `openai` SDK (retries on 408/409/429/5xx and connection errors; per-attempt timeout). Errors map to `PROVIDER_TIMEOUT` or `PROVIDER_ERROR` with the HTTP status. There are 14 offline adapter tests: 7 run the real SDK client against a fake `fetch`, 5 test the pure request/response mapping, 1 uses an injected client, and 1 checks the constructor.
 - **An unpriced model turned the USD budget caps off without warning.** It now fails at startup with `CONFIG_ERROR`. Added `gpt-6-luna` pricing.
+
+### Found by the second audit
+- **Quoting hid protected files from the shell rules.** `git diff --no-index src/a.txt .en''v` was auto-allowed as read-only git and printed `.env`, because the shell drops the quotes but the deny rule saw `.en''v`. Protected-name and environment rules now also run on the command with quotes, backticks and carets removed. Quotes, wildcards, variables, Windows 8.3 short names (`ENV~1`) and `--no-index` now need confirmation instead of being auto-allowed.
+- **The shell output cap didn't work.** The result JSON included the raw stdout/stderr next to the truncated `output`, so 50K characters of stdout reached the model as a 66K-character result. Only the capped output is sent now.
+- **A project's `.env` could redirect API traffic.** Running CodeLoop inside an untrusted repo loaded that repo's `.env`. If it set `OPENAI_BASE_URL`, the user's key from the shell would be sent there. The base URL must now come from the real environment, in any letter case (Windows environment names are case-insensitive).
+- **Approved commands were logged unredacted.** The `permission` event in the session log now goes through the same redaction as every other event.
 
 ### Scope and housekeeping
 - Removed unfinished integrations (MCP, LSP, web search), the NVIDIA provider, the unwired Ink UI, dead code and the `hello` scaffold. OpenAI Responses is the only backend.

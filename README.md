@@ -18,7 +18,7 @@
 
 ## What it is
 
-Give CodeLoop a coding task ("fix the off-by-one and run the test"). It loops: ask the model, run the tool calls the model requests (read, write, exact edit, shell), feed the results back, and stop when the model answers without calling a tool. Every tool call passes a path guard and a permission policy first, and the whole loop can be measured with an offline and a live evaluation suite.
+Give CodeLoop a coding task ("fix the off-by-one and run the test"). It loops: ask the model, run the tool calls the model requests (read, write, exact edit, shell), feed the results back, and stop when the model answers without calling a tool. Every tool call passes the permission policy first, and every file-tool call also passes a path guard. The whole loop can be measured with an offline and a live evaluation suite.
 
 ## Architecture
 
@@ -73,6 +73,7 @@ Both campaigns use the same 10 small live tasks × 3 repeats. Raw traces are in 
 
 | | cv-baseline | after hardening |
 |---|---|---|
+| Model | `gpt-5.6-luna` | `gpt-6-luna` |
 | Grading | file substring checks | file checks + grader runs `bun test` (with a hidden test) |
 | Pass rate | 30/30 | 29/30 |
 | Median / P95 latency | 11.47 s / 15.23 s | 9.64 s / 34.59 s |
@@ -86,19 +87,19 @@ Read [`evals/published/README.md`](evals/published/README.md) before quoting the
 ## Safety model, and its limits
 
 What it does:
-- **Path containment.** Every file path is resolved with `realpathSync.native` (so symlinks and junctions are followed) and must stay inside the project root. `.env`, `.git`, keys and system paths are always denied, and NTFS alternate streams are rejected.
+- **Path containment (file tools).** Every path given to `read`, `write` or `edit` is resolved with `realpathSync.native` (so symlinks and junctions are followed) and must stay inside the project root. `.env`, `.git`, keys and system paths are always denied, and NTFS alternate streams are rejected.
 - **Three permission tiers.**
-  - **allow:** read-only commands (`git status/diff/log`, plain `ls`) and edits inside `src/` and `tests/`.
-  - **confirm:** anything that runs project code (`bun test`, `bun run`, `node`), chaining, redirection, and edits to config files or existing files elsewhere.
-  - **deny:** destructive commands, environment dumps, and any reference to protected files.
+  - **allow:** read-only commands with plain arguments (`git status/diff/log/show`, plain `ls`/`dir`, `pwd`, plain `echo`, `tsc --noEmit`); edits inside `src/` and `tests/`; and creating new non-config files.
+  - **confirm:** anything that runs project code (`bun test`, `bun run`, `node`); chaining, redirection, quoting, wildcards and variables; edits to config files, or overwriting existing files outside `src/` and `tests/`.
+  - **deny:** destructive commands, environment dumps, and references to protected files, including ones disguised with shell quoting such as `.en''v`.
   - With no approver available, confirm means rejected (fail closed).
 - **Process hygiene.** Shell children get an allowlisted environment with API keys removed. Timeouts kill the whole process tree.
 - **Output hygiene.** Tool results and session logs are redacted for common secret formats.
 
-What it is not: **a sandbox.** Shell classification is regex-based and can be evaded. Code you approve runs with your user's permissions. Token counts in compaction are `chars/4` estimates. For untrusted repositories, run it in a container or VM.
+What it is not: **a sandbox.** Shell classification is regex-based and can be evaded. Code you approve runs with your user's permissions. Allow-tier `git` commands honour the repository's own git config. Token counts in compaction are `chars/4` estimates. For untrusted repositories, run it in a container or VM. A project's `.env` may set CodeLoop options, but never `OPENAI_BASE_URL`; set that in your shell.
 
 ## Limitations and next steps
-- No read-only search tool (grep/glob/list), so code search goes through shell and often needs approval. This is the main cause of the latency tail.
+- No read-only search tool (grep/glob/list), so code search goes through shell and often needs approval. The slowest runs (a rename task, up to 77 s) are spent guessing file paths. The P95 sample itself is a run with no failed calls, so it reflects provider latency.
 - Loop detection only catches identical repeated *failures*, not cycles of successful calls.
 - No streaming output. Compaction does not summarise with an LLM.
 - The eval tasks are small and correlated. A larger multi-file task set with pass@k is the next step for measurement.
