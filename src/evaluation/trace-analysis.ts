@@ -3,7 +3,6 @@
 // result line, `ok <tool>: ...` or `fail <tool>: ...`.
 
 const TEST_COMMAND = /^(?:npx\s+)?(?:bun|npm|yarn|pnpm)\s+(?:run\s+)?test\b/iu;
-const REJECTED_SHELL = 'fail shell: Shell command rejected by the user.';
 
 export function shellCommandOf(entry: string): string | undefined {
   if (!entry.startsWith('call shell ')) return undefined;
@@ -31,7 +30,15 @@ export function agentAttemptedTests(trace: string[] = []): boolean {
   });
 }
 
-/** Shell calls that needed approval and were turned down by the eval's approve callback. */
+/**
+ * Shell calls that needed approval and were turned down. Matches both the
+ * historical wording ("Shell command rejected by the user.") and the newer
+ * "Shell rejected ..." messages.
+ */
+export function isRejectedShellResult(entry: string): boolean {
+  return entry.startsWith('fail shell:') && /rejected/iu.test(entry);
+}
+
 export function countRejectedShellCalls(trace: string[] = []): number {
-  return trace.filter((entry) => entry === REJECTED_SHELL).length;
+  return trace.filter(isRejectedShellResult).length;
 }

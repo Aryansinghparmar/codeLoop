@@ -15,10 +15,11 @@ function row(taskId: string, durationMs: number, passed: boolean, toolTrace: str
 
 const ranTest = ['call shell {"command":"bun test tests/a.test.ts"}', 'ok shell: {"stdout":"1 pass"}'];
 const rejected = ['call shell {"command":"npm test"}', 'fail shell: Shell command rejected by the user.'];
+const rejectedNewWording = ['call shell {"command":"npm test"}', 'fail shell: Shell rejected by the user.'];
 const failedTest = ['call shell {"command":"bun test"}', 'fail shell: {"exitCode":1}'];
 
 const runs = [
-  { label: 'repeat-1', results: [row('T1', 1000, true, ranTest), row('T2', 3000, false, rejected)] },
+  { label: 'repeat-1', results: [row('T1', 1000, true, ranTest), row('T2', 3000, false, rejectedNewWording)] },
   { label: 'repeat-2', results: [row('T1', 2000, true, [...rejected, ...ranTest], { reductions: 1 }), row('T2', 4000, true, failedTest)] },
 ];
 
