@@ -12,156 +12,196 @@ async function read(root: string, relative: string): Promise<string> {
   return readFile(join(root, relative), 'utf8');
 }
 
-export const fixedTasks: BenchmarkTask[] = [
+/** Substring checks on one file after the agent has finished. */
+export interface FileCheck {
+  file: string;
+  includes?: string[];
+  includesAny?: string[];
+  includesIgnoringCase?: string[];
+  excludes?: string[];
+}
+
+export interface LiveTaskSpec {
+  id: string;
+  name: string;
+  prompt: string;
+  /** Files written before the agent starts. Empty for "create" tasks. */
+  fixtures?: Record<string, string>;
+  checks: FileCheck[];
+}
+
+/**
+ * Turns a task description into a BenchmarkTask. A fixture file that has
+ * disappeared throws (the run is invalid); a file the agent was asked to
+ * create and did not is a normal failed check.
+ */
+export function defineFixTask(spec: LiveTaskSpec): BenchmarkTask {
+  const fixtures = spec.fixtures ?? {};
+  return {
+    id: spec.id,
+    name: spec.name,
+    prompt: spec.prompt,
+    live: true,
+    async setup(root) {
+      await mkdir(join(root, 'src'), { recursive: true });
+      await mkdir(join(root, 'tests'), { recursive: true });
+      for (const [file, content] of Object.entries(fixtures)) await write(root, file, content);
+    },
+    async assert(root) {
+      const details: string[] = [];
+      let passed = true;
+      for (const check of spec.checks) {
+        let content: string;
+        try {
+          content = await read(root, check.file);
+        } catch (error) {
+          if (check.file in fixtures) throw error;
+          details.push(`${check.file} exists: FAILED`);
+          passed = false;
+          continue;
+        }
+        for (const [label, ok] of fileCheckResults(check, content)) {
+          details.push(`${check.file} ${label}: ${ok ? 'ok' : 'FAILED'}`);
+          passed &&= ok;
+        }
+      }
+      return { passed, details };
+    },
+  };
+}
+
+function fileCheckResults(check: FileCheck, content: string): Array<[string, boolean]> {
+  const lower = content.toLowerCase();
+  return [
+    ...(check.includes ?? []).map((text): [string, boolean] => [`contains ${JSON.stringify(text)}`, content.includes(text)]),
+    ...(check.includesAny?.length ? [[`contains one of ${JSON.stringify(check.includesAny)}`, check.includesAny.some((text) => content.includes(text))] as [string, boolean]] : []),
+    ...(check.includesIgnoringCase ?? []).map((text): [string, boolean] => [`contains ${JSON.stringify(text)} (any case)`, lower.includes(text.toLowerCase())]),
+    ...(check.excludes ?? []).map((text): [string, boolean] => [`does not contain ${JSON.stringify(text)}`, !content.includes(text)]),
+  ];
+}
+
+function bunTest(importName: string, from: string, name: string, assertion: string): string {
+  return `import { test, expect } from 'bun:test';\nimport { ${importName} } from '${from}';\ntest('${name}', () => ${assertion});\n`;
+}
+
+const liveTasks: LiveTaskSpec[] = [
   {
     id: 'T1',
     name: 'create-function',
-    live: true,
     prompt: 'Create src/greet.ts. Export a function named greet that accepts a name string and returns Hello, <name>!. Also create tests/greet.test.ts with a small test for the function. Run the test.',
-    async setup(root) { await mkdir(join(root, 'src'), { recursive: true }); await mkdir(join(root, 'tests'), { recursive: true }); },
-    async assert(root) {
-      const details: string[] = [];
-      try {
-        const source = await read(root, 'src/greet.ts');
-        details.push(source.includes('export') && source.includes('greet') ? 'export and function found' : 'expected export is missing');
-        const test = await read(root, 'tests/greet.test.ts');
-        details.push(test.includes('greet') ? 'test found' : 'test is missing');
-        return { passed: details.every((item) => !item.endsWith('missing')), details };
-      } catch { return { passed: false, details: ['created files are missing'] }; }
-    },
+    checks: [
+      { file: 'src/greet.ts', includes: ['export', 'greet'] },
+      { file: 'tests/greet.test.ts', includes: ['greet'] },
+    ],
   },
   {
     id: 'T2',
     name: 'edit-arithmetic',
-    live: true,
     prompt: 'Fix src/add.ts. The add function currently returns a - b. It must return a + b. Do not change the test. Run the test.',
-    async setup(root) {
-      await write(root, 'src/add.ts', 'export function add(a: number, b: number): number { return a - b; }\n');
-      await write(root, 'tests/add.test.ts', "import { test, expect } from 'bun:test';\nimport { add } from '../src/add';\ntest('adds', () => expect(add(2, 3)).toBe(5));\n");
+    fixtures: {
+      'src/add.ts': 'export function add(a: number, b: number): number { return a - b; }\n',
+      'tests/add.test.ts': bunTest('add', '../src/add', 'adds', 'expect(add(2, 3)).toBe(5)'),
     },
-    async assert(root) {
-      const source = await read(root, 'src/add.ts');
-      const test = await read(root, 'tests/add.test.ts');
-      return { passed: source.includes('a + b') && !source.includes('a - b') && test.includes('toBe(5)'), details: [source.includes('a + b') ? 'addition fixed' : 'addition is not fixed', test.includes('toBe(5)') ? 'test unchanged' : 'test changed'] };
-    },
+    checks: [
+      { file: 'src/add.ts', includes: ['a + b'], excludes: ['a - b'] },
+      { file: 'tests/add.test.ts', includes: ['toBe(5)'] },
+    ],
   },
   {
     id: 'T3',
     name: 'repair-test',
-    live: true,
     prompt: 'Fix the off-by-one bug in src/count.ts so countTo(3) returns [1, 2, 3]. Do not change the existing test. Run all tests.',
-    async setup(root) {
-      await write(root, 'src/count.ts', 'export function countTo(n: number): number[] { return Array.from({ length: n }, (_, i) => i); }\n');
-      await write(root, 'tests/count.test.ts', "import { test, expect } from 'bun:test';\nimport { countTo } from '../src/count';\ntest('counts', () => expect(countTo(3)).toEqual([1, 2, 3]));\n");
+    fixtures: {
+      'src/count.ts': 'export function countTo(n: number): number[] { return Array.from({ length: n }, (_, i) => i); }\n',
+      'tests/count.test.ts': bunTest('countTo', '../src/count', 'counts', 'expect(countTo(3)).toEqual([1, 2, 3])'),
     },
-    async assert(root) {
-      const source = await read(root, 'src/count.ts');
-      const test = await read(root, 'tests/count.test.ts');
-      return { passed: source.includes('i + 1') && test.includes('[1, 2, 3]'), details: [source.includes('i + 1') ? 'off-by-one fixed' : 'off-by-one is not fixed', test.includes('[1, 2, 3]') ? 'test unchanged' : 'test changed'] };
-    },
+    checks: [
+      { file: 'src/count.ts', includes: ['i + 1'] },
+      { file: 'tests/count.test.ts', includes: ['[1, 2, 3]'] },
+    ],
   },
   {
     id: 'T4',
     name: 'rename-symbol',
-    live: true,
     prompt: 'Rename formatUser to formatProfile in src/profile.ts and its test caller. Keep the same behaviour and run the test.',
-    async setup(root) {
-      await write(root, 'src/profile.ts', 'export function formatUser(name: string): string { return `User: ${name}`; }\n');
-      await write(root, 'tests/profile.test.ts', "import { test, expect } from 'bun:test';\nimport { formatUser } from '../src/profile';\ntest('formats', () => expect(formatUser('Aryan')).toBe('User: Aryan'));\n");
+    fixtures: {
+      'src/profile.ts': 'export function formatUser(name: string): string { return `User: ${name}`; }\n',
+      'tests/profile.test.ts': bunTest('formatUser', '../src/profile', 'formats', "expect(formatUser('Aryan')).toBe('User: Aryan')"),
     },
-    async assert(root) {
-      const source = await read(root, 'src/profile.ts');
-      const test = await read(root, 'tests/profile.test.ts');
-      return { passed: source.includes('formatProfile') && test.includes('formatProfile') && !source.includes('formatUser') && !test.includes('formatUser'), details: [source.includes('formatProfile') && test.includes('formatProfile') ? 'new symbol used' : 'new symbol missing', !source.includes('formatUser') && !test.includes('formatUser') ? 'old symbol removed' : 'old symbol remains'] };
-    },
+    checks: [
+      { file: 'src/profile.ts', includes: ['formatProfile'], excludes: ['formatUser'] },
+      { file: 'tests/profile.test.ts', includes: ['formatProfile'], excludes: ['formatUser'] },
+    ],
   },
   {
     id: 'T7',
     name: 'create-multiply-function',
-    live: true,
     prompt: 'Create src/multiply.ts. Export a function named multiply that returns the product of two numbers. Also create tests/multiply.test.ts with a test for multiply(4, 5). Run the test.',
-    async setup(root) { await mkdir(join(root, 'src'), { recursive: true }); await mkdir(join(root, 'tests'), { recursive: true }); },
-    async assert(root) {
-      try {
-        const source = await read(root, 'src/multiply.ts');
-        const test = await read(root, 'tests/multiply.test.ts');
-        return { passed: source.includes('export') && source.includes('multiply') && source.includes('*') && test.includes('multiply') && test.includes('20'), details: ['multiply source checked', 'multiply test checked'] };
-      } catch { return { passed: false, details: ['multiply files are missing'] }; }
-    },
+    checks: [
+      { file: 'src/multiply.ts', includes: ['export', 'multiply', '*'] },
+      { file: 'tests/multiply.test.ts', includes: ['multiply', '20'] },
+    ],
   },
   {
     id: 'T8',
     name: 'fix-even-check',
-    live: true,
     prompt: 'Fix src/is-even.ts. The isEven function currently returns n % 2 === 1. It must return true for even numbers. Do not change the test. Run the test.',
-    async setup(root) {
-      await write(root, 'src/is-even.ts', 'export function isEven(n: number): boolean { return n % 2 === 1; }\n');
-      await write(root, 'tests/is-even.test.ts', "import { test, expect } from 'bun:test';\nimport { isEven } from '../src/is-even';\ntest('checks even numbers', () => expect(isEven(4)).toBe(true));\n");
+    fixtures: {
+      'src/is-even.ts': 'export function isEven(n: number): boolean { return n % 2 === 1; }\n',
+      'tests/is-even.test.ts': bunTest('isEven', '../src/is-even', 'checks even numbers', 'expect(isEven(4)).toBe(true)'),
     },
-    async assert(root) {
-      const source = await read(root, 'src/is-even.ts');
-      const test = await read(root, 'tests/is-even.test.ts');
-      return { passed: source.includes('n % 2 === 0') && !source.includes('n % 2 === 1') && test.includes('toBe(true)'), details: [source.includes('n % 2 === 0') ? 'even check fixed' : 'even check is not fixed', test.includes('toBe(true)') ? 'test unchanged' : 'test changed'] };
-    },
+    checks: [
+      { file: 'src/is-even.ts', includes: ['n % 2 === 0'], excludes: ['n % 2 === 1'] },
+      { file: 'tests/is-even.test.ts', includes: ['toBe(true)'] },
+    ],
   },
   {
     id: 'T9',
     name: 'create-uppercase-function',
-    live: true,
     prompt: 'Create src/upper.ts. Export a function named upper that returns the input string in uppercase. Also create tests/upper.test.ts with a test for upper("hello"). Run the test.',
-    async setup(root) { await mkdir(join(root, 'src'), { recursive: true }); await mkdir(join(root, 'tests'), { recursive: true }); },
-    async assert(root) {
-      try {
-        const source = await read(root, 'src/upper.ts');
-        const test = await read(root, 'tests/upper.test.ts');
-        return { passed: source.includes('export') && source.includes('upper') && source.includes('toUpperCase') && test.includes('upper') && test.toLowerCase().includes('hello'), details: ['uppercase source checked', 'uppercase test checked'] };
-      } catch { return { passed: false, details: ['uppercase files are missing'] }; }
-    },
+    checks: [
+      { file: 'src/upper.ts', includes: ['export', 'upper', 'toUpperCase'] },
+      { file: 'tests/upper.test.ts', includes: ['upper'], includesIgnoringCase: ['hello'] },
+    ],
   },
   {
     id: 'T10',
     name: 'fix-maximum-function',
-    live: true,
     prompt: 'Fix src/max.ts. The max function currently uses Math.min. It must return the larger of two numbers. Do not change the test. Run the test.',
-    async setup(root) {
-      await write(root, 'src/max.ts', 'export function max(a: number, b: number): number { return Math.min(a, b); }\n');
-      await write(root, 'tests/max.test.ts', "import { test, expect } from 'bun:test';\nimport { max } from '../src/max';\ntest('returns the larger number', () => expect(max(7, 3)).toBe(7));\n");
+    fixtures: {
+      'src/max.ts': 'export function max(a: number, b: number): number { return Math.min(a, b); }\n',
+      'tests/max.test.ts': bunTest('max', '../src/max', 'returns the larger number', 'expect(max(7, 3)).toBe(7)'),
     },
-    async assert(root) {
-      const source = await read(root, 'src/max.ts');
-      const test = await read(root, 'tests/max.test.ts');
-      return { passed: source.includes('Math.max') && !source.includes('Math.min') && test.includes('toBe(7)'), details: [source.includes('Math.max') ? 'maximum fixed' : 'maximum is not fixed', test.includes('toBe(7)') ? 'test unchanged' : 'test changed'] };
-    },
+    checks: [
+      { file: 'src/max.ts', includes: ['Math.max'], excludes: ['Math.min'] },
+      { file: 'tests/max.test.ts', includes: ['toBe(7)'] },
+    ],
   },
   {
     id: 'T11',
     name: 'rename-label-symbol',
-    live: true,
     prompt: 'Rename formatLabel to formatDisplayLabel in src/label.ts and its test caller. Keep the same behaviour and run the test.',
-    async setup(root) {
-      await write(root, 'src/label.ts', 'export function formatLabel(value: string): string { return `Label: ${value}`; }\n');
-      await write(root, 'tests/label.test.ts', "import { test, expect } from 'bun:test';\nimport { formatLabel } from '../src/label';\ntest('formats labels', () => expect(formatLabel('CodeLoop')).toBe('Label: CodeLoop'));\n");
+    fixtures: {
+      'src/label.ts': 'export function formatLabel(value: string): string { return `Label: ${value}`; }\n',
+      'tests/label.test.ts': bunTest('formatLabel', '../src/label', 'formats labels', "expect(formatLabel('CodeLoop')).toBe('Label: CodeLoop')"),
     },
-    async assert(root) {
-      const source = await read(root, 'src/label.ts');
-      const test = await read(root, 'tests/label.test.ts');
-      return { passed: source.includes('formatDisplayLabel') && test.includes('formatDisplayLabel') && !source.includes('formatLabel(') && !test.includes('formatLabel('), details: [source.includes('formatDisplayLabel') && test.includes('formatDisplayLabel') ? 'new label symbol used' : 'new label symbol missing', !source.includes('formatLabel(') && !test.includes('formatLabel(') ? 'old label symbol removed' : 'old label symbol remains'] };
-    },
+    checks: [
+      { file: 'src/label.ts', includes: ['formatDisplayLabel'], excludes: ['formatLabel('] },
+      { file: 'tests/label.test.ts', includes: ['formatDisplayLabel'], excludes: ['formatLabel('] },
+    ],
   },
   {
     id: 'T12',
     name: 'create-palindrome-function',
-    live: true,
     prompt: 'Create src/is-palindrome.ts. Export a function named isPalindrome that returns true when a word reads the same forward and backward. Also create tests/is-palindrome.test.ts with a test for "level". Run the test.',
-    async setup(root) { await mkdir(join(root, 'src'), { recursive: true }); await mkdir(join(root, 'tests'), { recursive: true }); },
-    async assert(root) {
-      try {
-        const source = await read(root, 'src/is-palindrome.ts');
-        const test = await read(root, 'tests/is-palindrome.test.ts');
-        return { passed: source.includes('export') && source.includes('isPalindrome') && (source.includes('reverse') || source.includes('split')) && test.includes('isPalindrome') && test.toLowerCase().includes('level'), details: ['palindrome source checked', 'palindrome test checked'] };
-      } catch { return { passed: false, details: ['palindrome files are missing'] }; }
-    },
+    checks: [
+      { file: 'src/is-palindrome.ts', includes: ['export', 'isPalindrome'], includesAny: ['reverse', 'split'] },
+      { file: 'tests/is-palindrome.test.ts', includes: ['isPalindrome'], includesIgnoringCase: ['level'] },
+    ],
   },
+];
+
+const offlineTasks: BenchmarkTask[] = [
   {
     id: 'T5',
     name: 'recover-from-tool-failure',
@@ -189,3 +229,6 @@ export const fixedTasks: BenchmarkTask[] = [
     },
   },
 ];
+
+/** The ten live tasks, then the two offline-only tasks (same order as before). */
+export const fixedTasks: BenchmarkTask[] = [...liveTasks.map(defineFixTask), ...offlineTasks];
