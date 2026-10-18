@@ -124,6 +124,14 @@ export class AgentLoop {
 
   private async executeToolCall(call: LlmToolCall, callbacks: AgentCallbacks, signal?: AbortSignal): Promise<ToolResult> {
     callbacks.onToolCall?.(call);
+    const result = hasInvalidJsonArguments(call)
+      ? { ok: false, content: `The arguments for tool '${call.name}' were not valid JSON, so the tool was not run. Call it again with a valid JSON object.` }
+      : await this.tools.execute(call.name, call.arguments, this.toolContext(callbacks, signal));
+    callbacks.onToolResult?.(call, result);
+    return result;
+  }
+
+  private toolContext(callbacks: AgentCallbacks, signal?: AbortSignal): ToolExecutionContext {
     const context: ToolExecutionContext = {
       projectRoot: this.config.projectRoot,
       pathGuard: this.pathGuard,
@@ -131,9 +139,7 @@ export class AgentLoop {
     };
     if (callbacks.approve) context.approve = callbacks.approve;
     if (signal) context.signal = signal;
-    const result = await this.tools.execute(call.name, call.arguments, context);
-    callbacks.onToolResult?.(call, result);
-    return result;
+    return context;
   }
 
   private success(text: string, messages: LlmMessage[], stats: RunStats): AgentRunResult {
@@ -162,6 +168,11 @@ export class AgentLoop {
     const details = error instanceof CodeLoopError ? error.details : {};
     return this.failure(code, message, stats, details);
   }
+}
+
+/** The provider marks unparseable tool arguments with an `__invalidJson` key (see parseJsonObject). */
+function hasInvalidJsonArguments(call: LlmToolCall): boolean {
+  return typeof call.arguments === 'object' && call.arguments !== null && '__invalidJson' in call.arguments;
 }
 
 function assistantMessage(response: LlmResponse): LlmMessage {

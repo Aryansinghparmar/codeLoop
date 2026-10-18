@@ -80,6 +80,23 @@ describe('agent loop', () => {
     } finally { await removeRoot(root); }
   });
 
+  test('tool arguments marked __invalidJson return an error tool result instead of running the tool', async () => {
+    const root = await temporaryRoot();
+    try {
+      const config = createConfig(root);
+      const loop = createLoop(config, (_request, index) => index === 0
+        ? toolResponse({ id: 'bad-1', name: 'write', arguments: { __invalidJson: '{"path": "x.txt", "content": ' } })
+        : textResponse('Recovered.'));
+      const result = await loop.run('Write a file.');
+      expect(result.text).toBe('Recovered.');
+      expect(result.failedToolCalls).toBe(1);
+      const toolMessage = result.messages.find((message) => message.role === 'tool');
+      expect(toolMessage?.toolCallId).toBe('bad-1');
+      expect(toolMessage?.content).toContain('not valid JSON');
+      expect(await Bun.file(join(root, 'x.txt')).exists()).toBe(false);
+    } finally { await removeRoot(root); }
+  });
+
   test('system prompt names the OS, shell, project root, date and test runner', () => {
     const windows = buildSystemPrompt('C:\\repo', 'win32', new Date('2026-10-18T12:00:00Z'));
     expect(windows).toContain('win32');
