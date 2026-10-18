@@ -6,7 +6,7 @@ import { NativeProcessRunner } from '../infrastructure/process/native-process-ru
 import { fixedTasks } from './fixed-tasks';
 import { EvaluationRunner } from './runner';
 import { report } from './report-generator';
-import { writeRawResults } from './result-writer';
+import { createRunDirectory, relativePath, writeRawResults } from './result-writer';
 
 const root = process.cwd();
 loadEnvironment(root);
@@ -24,7 +24,10 @@ if (!process.env.OPENAI_API_KEY) {
 const provider = new OpenAiResponsesProvider(config);
 const requestedTasks = process.env.CODELOOP_LIVE_TASKS?.split(',').map((value) => value.trim()).filter(Boolean);
 const tasks = fixedTasks.filter((task) => task.live && (!requestedTasks?.length || requestedTasks.includes(task.id)));
+// A new timestamped folder per run (created before spending anything), so earlier results are never overwritten.
+const runDirectory = createRunDirectory(root);
 const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner(), { graderRunner: new NativeProcessRunner() });
 const summary = report(results);
-writeRawResults(join(root, 'evals', 'results', `live-${provider.name}.jsonl`), results);
-console.log(JSON.stringify({ provider: provider.name, summary, results }, null, 2));
+const resultPath = join(runDirectory, `live-${provider.name}.jsonl`);
+writeRawResults(resultPath, results);
+console.log(JSON.stringify({ provider: provider.name, model: provider.model, summary, resultFile: relativePath(root, resultPath), results }, null, 2));

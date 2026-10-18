@@ -75,6 +75,33 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
   };
 }
 
+/**
+ * The summary file `eval:repeat` writes next to its JSONL files. It keeps the
+ * old `reports`/`aggregate` keys and records how the numbers were computed,
+ * so nobody has to patch it by hand afterwards.
+ */
+export function buildRepeatedSummary(input: { provider: string; model: string; startedAt: string; taskCount: number; resultFiles: string[]; runs: RunInput[] }) {
+  const summary = summarize(input.runs);
+  return {
+    provider: input.provider,
+    model: input.model,
+    reportedModels: [...new Set(input.runs.flatMap((run) => run.results.map((result) => result.model)))],
+    startedAt: input.startedAt,
+    repeatCount: input.runs.length,
+    taskCount: input.taskCount,
+    statMethod: summary.statMethod,
+    grading: 'passed = file assertions AND the grader\'s own bun test run (see grader / testsPassed)',
+    reports: summary.perRun.map((run) => run.report),
+    aggregate: { ...summary.pooled, statMethod: summary.statMethod },
+    passMatrix: summary.passMatrix,
+    traceStats: summary.traceStats,
+    grader: summary.grader,
+    totalEstimatedCostUsd: summary.totalEstimatedCostUsd,
+    passRate: summary.passRate,
+    resultFiles: input.resultFiles,
+  };
+}
+
 export function passMatrix(runs: RunInput[]): { columns: string[]; rows: Record<string, MatrixCell[]> } {
   const taskIds = [...new Set(runs.flatMap((run) => run.results.map((result) => result.taskId)))];
   const rows: Record<string, MatrixCell[]> = {};

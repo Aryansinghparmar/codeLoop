@@ -1,14 +1,13 @@
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { createConfig } from '../config/config';
 import { loadEnvironment } from '../config/env';
 import { OpenAiResponsesProvider } from '../llm/openai/responses-provider';
 import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
 import { fixedTasks } from './fixed-tasks';
 import { EvaluationRunner } from './runner';
-import { report, type EvaluationReport } from './report-generator';
-import { writeRawResults } from './result-writer';
-import type { EvaluationResult } from './types';
+import { createRunDirectory, relativePath, writeRawResults } from './result-writer';
+import { buildRepeatedSummary, type RunInput } from './summarize';
 
 const root = process.cwd();
 loadEnvironment(root);
@@ -28,25 +27,24 @@ const provider = new OpenAiResponsesProvider(config);
 const requestedTasks = process.env.CODELOOP_LIVE_TASKS?.split(',').map((value) => value.trim()).filter(Boolean);
 const tasks = fixedTasks.filter((task) => task.live && (!requestedTasks?.length || requestedTasks.includes(task.id)));
 const runner = new EvaluationRunner(config);
-const reports: EvaluationReport[] = [];
+const started = new Date();
+// A new timestamped folder per run, so earlier results (the cv-baseline) are never overwritten.
+const runDirectory = createRunDirectory(root, started);
+const runs: RunInput[] = [];
 const resultFiles: string[] = [];
-const allResults: EvaluationResult[] = [];
 
 for (let repeat = 1; repeat <= repeatCount; repeat += 1) {
   const results = await runner.run(provider, tasks, new NativeProcessRunner(), { graderRunner: new NativeProcessRunner() });
-  const summary = report(results);
-  reports.push(summary);
-  allResults.push(...results);
-  const resultPath = join(root, 'evals', 'results', `live-${provider.name}-repeat-${repeat}.jsonl`);
+  const resultPath = join(runDirectory, `live-${provider.name}-repeat-${repeat}.jsonl`);
   writeRawResults(resultPath, results);
-  resultFiles.push(resultPath);
+  runs.push({ label: `repeat-${repeat}`, results });
+  resultFiles.push(relativePath(root, resultPath));
 }
 
-const aggregate = report(allResults);
-const summaryPath = join(root, 'evals', 'results', `live-${provider.name}-repeated-summary.json`);
-mkdirSync(join(root, 'evals', 'results'), { recursive: true });
-writeFileSync(summaryPath, JSON.stringify({ provider: provider.name, model: process.env.OPENAI_MODEL ?? 'configured-provider-model', repeatCount, taskCount: tasks.length, reports, aggregate, resultFiles }, null, 2) + '\n', 'utf8');
-console.log(JSON.stringify({ provider: provider.name, model: process.env.OPENAI_MODEL ?? 'configured-provider-model', repeatCount, taskCount: tasks.length, reports, aggregate, summaryPath, resultFiles }, null, 2));
+const summary = buildRepeatedSummary({ provider: provider.name, model: provider.model, startedAt: started.toISOString(), taskCount: tasks.length, resultFiles, runs });
+const summaryPath = join(runDirectory, `live-${provider.name}-repeated-summary.json`);
+writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n', 'utf8');
+console.log(JSON.stringify({ ...summary, summaryPath: relativePath(root, summaryPath) }, null, 2));
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value ?? fallback);
