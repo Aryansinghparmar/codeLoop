@@ -59,13 +59,16 @@ export function toolDefinitionToOpenAiFunction(tool: LlmToolDefinition): Record<
   };
 }
 
+export const INVALID_JSON_KEY = '__invalidJson';
+
+// Contract: returns the parsed JSON object; empty input means no arguments ({}); anything else (bad JSON, arrays, primitives) returns { __invalidJson: '<first 200 chars>' } so the caller can tell the model.
 export function parseJsonObject(value: string): Record<string, unknown> {
+  if (value.trim() === '') return {};
   try {
     const parsed: unknown = JSON.parse(value);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
   } catch {
-    return {};
+    // Fall through to the invalid marker.
   }
+  return { [INVALID_JSON_KEY]: value.slice(0, 200) };
 }
