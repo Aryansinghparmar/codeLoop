@@ -1,3 +1,4 @@
+import { median } from './metrics';
 import { report, type EvaluationReport } from './report-generator';
 import { agentAttemptedTests, agentRanTests, countRejectedShellCalls } from './trace-analysis';
 import type { EvalSuite, EvaluationResult } from './types';
@@ -36,8 +37,47 @@ export interface GraderStats {
   assertionsPassed: number;
 }
 
+/** One task across all repeats. Invalid and missing runs count as failures. */
+export interface TaskRow {
+  taskId: string;
+  runs: number;
+  passes: number;
+  passRate: number;
+  invalid: number;
+  runsWithCompaction: number;
+  medianSteps: number;
+  meanCostUsd: number;
+}
+
+/**
+ * pass@1: each task's pass rate over the k repeats, averaged over tasks.
+ * pass@k: share of tasks that passed in at least one of the k repeats.
+ * pass^k: share of tasks that passed in all k repeats.
+ */
+export interface PassAtK {
+  k: number;
+  tasks: number;
+  pass1: number;
+  passAtK: number;
+  passHatK: number;
+  method: string;
+}
+
+/** Whether runs whose context was compacted (reductions > 0) pass as often as the others. */
+export interface CompactionStats {
+  runsWithCompaction: number;
+  passedWithCompaction: number;
+  /** null when no run was compacted. */
+  passRateWithCompaction: number | null;
+  runsWithoutCompaction: number;
+  passedWithoutCompaction: number;
+  passRateWithoutCompaction: number | null;
+}
+
 export interface EvaluationSummary {
   statMethod: string;
+  /** Suites found in the rows; rows written before v2 existed have no suite and are v1. */
+  suites: string[];
   pooled: EvaluationReport & { latencyMinMs: number; latencyMaxMs: number; p95Rank: string };
   perRun: Array<{ label: string; report: EvaluationReport }>;
   passMatrix: { columns: string[]; rows: Record<string, MatrixCell[]> };
@@ -45,6 +85,9 @@ export interface EvaluationSummary {
   grader: GraderStats;
   totalEstimatedCostUsd: number;
   passRate: { passed: number; total: number; lowerBound95: number; method: string };
+  passAtK: PassAtK;
+  perTask: TaskRow[];
+  compaction: CompactionStats;
 }
 
 export function summarize(runs: RunInput[]): EvaluationSummary {
@@ -53,8 +96,10 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
   const latencies = all.filter((result) => result.valid).map((result) => result.durationMs).sort((a, b) => a - b);
   const p95Index = Math.max(0, Math.ceil(0.95 * latencies.length) - 1);
   const passed = all.filter((result) => result.valid && result.passed).length;
+  const matrix = passMatrix(runs);
   return {
     statMethod: STAT_METHOD,
+    suites: [...new Set(all.map((result) => result.suite ?? 'v1'))],
     pooled: {
       ...pooled,
       latencyMinMs: latencies[0] ?? 0,
@@ -62,7 +107,7 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
       p95Rank: latencies.length ? `${p95Index + 1}/${latencies.length}` : '0/0',
     },
     perRun: runs.map((run) => ({ label: run.label, report: report(run.results) })),
-    passMatrix: passMatrix(runs),
+    passMatrix: matrix,
     traceStats: traceStats(all),
     grader: graderStats(all),
     totalEstimatedCostUsd: all.reduce((total, result) => total + (result.estimatedCostUsd ?? 0), 0),
@@ -72,6 +117,54 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
       lowerBound95: clopperPearsonLower(passed, all.length),
       method: 'one-sided 95% Clopper-Pearson, assuming independent runs; repeats of the same task are correlated, so this is optimistic',
     },
+    passAtK: passAtK(matrix),
+    perTask: perTask(matrix, all),
+    compaction: compactionStats(all),
+  };
+}
+
+export function passAtK(matrix: { columns: string[]; rows: Record<string, MatrixCell[]> }): PassAtK {
+  const k = matrix.columns.length;
+  const passCounts = Object.values(matrix.rows).map((cells) => cells.filter((cell) => cell === 'pass').length);
+  const share = (count: number): number => (passCounts.length ? count / passCounts.length : 0);
+  return {
+    k,
+    tasks: passCounts.length,
+    pass1: share(sum(passCounts.map((passes) => (k ? passes / k : 0)))),
+    passAtK: share(passCounts.filter((passes) => passes > 0).length),
+    passHatK: share(passCounts.filter((passes) => k > 0 && passes === k).length),
+    method: 'k = number of runs (repeats); a task missing from a run, or invalid in it, counts as a failure there. With n = k samples per task, pass@k is the share of tasks with at least one pass.',
+  };
+}
+
+export function perTask(matrix: { columns: string[]; rows: Record<string, MatrixCell[]> }, results: EvaluationResult[]): TaskRow[] {
+  return Object.entries(matrix.rows).map(([taskId, cells]) => {
+    const rows = results.filter((result) => result.taskId === taskId);
+    const passes = cells.filter((cell) => cell === 'pass').length;
+    return {
+      taskId,
+      runs: cells.length,
+      passes,
+      passRate: cells.length ? passes / cells.length : 0,
+      invalid: cells.filter((cell) => cell === 'invalid').length,
+      runsWithCompaction: rows.filter((result) => result.reductions > 0).length,
+      medianSteps: median(rows.filter((result) => result.valid).map((result) => result.steps)),
+      meanCostUsd: rows.length ? sum(rows.map((result) => result.estimatedCostUsd ?? 0)) / rows.length : 0,
+    };
+  });
+}
+
+export function compactionStats(results: EvaluationResult[]): CompactionStats {
+  const passed = (rows: EvaluationResult[]): number => rows.filter((result) => result.valid && result.passed).length;
+  const compacted = results.filter((result) => result.reductions > 0);
+  const others = results.filter((result) => result.reductions === 0);
+  return {
+    runsWithCompaction: compacted.length,
+    passedWithCompaction: passed(compacted),
+    passRateWithCompaction: compacted.length ? passed(compacted) / compacted.length : null,
+    runsWithoutCompaction: others.length,
+    passedWithoutCompaction: passed(others),
+    passRateWithoutCompaction: others.length ? passed(others) / others.length : null,
   };
 }
 
@@ -99,6 +192,9 @@ export function buildRepeatedSummary(input: { provider: string; model: string; s
     grader: summary.grader,
     totalEstimatedCostUsd: summary.totalEstimatedCostUsd,
     passRate: summary.passRate,
+    passAtK: summary.passAtK,
+    perTask: summary.perTask,
+    compaction: summary.compaction,
     resultFiles: input.resultFiles,
   };
 }
@@ -209,6 +305,21 @@ export function formatSummary(summary: EvaluationSummary): string {
     `Total estimated cost: $${summary.totalEstimatedCostUsd.toFixed(7)} (from the local price table, not a bill)`,
     `Pass rate ${passRate.passed}/${passRate.total}; 95% lower bound ${passRate.lowerBound95.toFixed(4)}`,
     `  (${passRate.method})`,
+    '',
+    `Suites: ${summary.suites.join(', ')}`,
+    `pass@1 ${summary.passAtK.pass1.toFixed(4)}, pass@${summary.passAtK.k} ${summary.passAtK.passAtK.toFixed(4)}, pass^${summary.passAtK.k} ${summary.passAtK.passHatK.toFixed(4)} over ${summary.passAtK.tasks} tasks`,
+    `  (${summary.passAtK.method})`,
+    '',
+    'Per task (passes/runs, invalid runs, runs with compaction, median steps, mean cost)',
+    ...summary.perTask.map((row) => `  ${row.taskId.padEnd(4)} ${row.passes}/${row.runs}  invalid ${row.invalid}  compacted ${row.runsWithCompaction}  steps ${row.medianSteps}  $${row.meanCostUsd.toFixed(5)}`),
+    '',
+    'Compaction',
+    `  runs with reductions > 0: ${formatRate(summary.compaction.passedWithCompaction, summary.compaction.runsWithCompaction)}`,
+    `  runs without compaction: ${formatRate(summary.compaction.passedWithoutCompaction, summary.compaction.runsWithoutCompaction)}`,
   ];
   return lines.join('\n');
+}
+
+function formatRate(passed: number, runs: number): string {
+  return runs ? `${runs}, passed ${passed} (${(passed / runs).toFixed(4)})` : '0 (no pass rate)';
 }
