@@ -6,8 +6,9 @@ export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
 
   public register(tool: Tool): void {
-    if (this.tools.has(tool.definition.name)) throw new Error(`Tool '${tool.definition.name}' is already registered.`);
-    this.tools.set(tool.definition.name, tool);
+    const name = tool.definition.name;
+    if (this.tools.has(name)) throw new Error(`Tool '${name}' is already registered.`);
+    this.tools.set(name, tool);
   }
 
   public get(name: string): Tool | undefined {
@@ -18,6 +19,7 @@ export class ToolRegistry {
     return [...this.tools.values()].map((tool) => tool.definition);
   }
 
+  /** Runs a tool. A thrown error becomes a failed result, and all output is redacted before it leaves. */
   public async execute(name: string, args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) return { ok: false, content: `Unknown tool '${name}'.` };
@@ -25,7 +27,8 @@ export class ToolRegistry {
       const result = await tool.execute(args, context);
       return { ...result, content: redactSecrets(result.content) };
     } catch (error) {
-      return { ok: false, content: redactSecrets(error instanceof Error ? error.message : String(error)) };
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, content: redactSecrets(message) };
     }
   }
 }
