@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { createConfig } from '../config/config';
 import { loadEnvironment } from '../config/env';
 import { OpenAiResponsesProvider } from '../llm/openai/responses-provider';
-import { NvidiaNimChatProvider } from '../llm/nvidia/chat-provider';
 import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
 import { fixedTasks } from './fixed-tasks';
 import { EvaluationRunner } from './runner';
@@ -17,17 +16,12 @@ if (process.env.CODELOOP_LIVE_CONFIRM !== 'yes') {
 }
 
 const config = createConfig(root);
-const useOpenAi = process.env.CODELOOP_PROVIDER === 'openai';
-if (useOpenAi && !process.env.OPENAI_API_KEY) {
+if (!process.env.OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is not set.');
   process.exit(2);
 }
-if (!useOpenAi && !process.env.NVIDIA_API_KEY) {
-  console.error('NVIDIA_API_KEY is not set.');
-  process.exit(2);
-}
 
-const provider = useOpenAi ? new OpenAiResponsesProvider(config) : new NvidiaNimChatProvider(config);
+const provider = new OpenAiResponsesProvider(config);
 const requestedTasks = process.env.CODELOOP_LIVE_TASKS?.split(',').map((value) => value.trim()).filter(Boolean);
 const tasks = fixedTasks.filter((task) => task.live && (!requestedTasks?.length || requestedTasks.includes(task.id)));
 const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner());

@@ -22,10 +22,6 @@ export class CodeLoopError extends Error {
   }
 }
 
-export function createCodeLoopError(code: CodeLoopError['code'], message: string): CodeLoopError {
-  return new CodeLoopError(code, message);
-}
-
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
