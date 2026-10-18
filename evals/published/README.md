@@ -13,7 +13,7 @@ No API key or network access is needed.
 
 | | `cv-baseline` | `2026-10-18-test-graded` |
 |---|---|---|
-| Code | tag `cv-baseline` | after the hardening pass (see `CHANGELOG.md`) |
+| Code | tag `cv-baseline` | commit `bca32b9`, after the first hardening pass. The "second audit" fixes in `CHANGELOG.md` came later and are not reflected; the stricter shell rule would probably add a few eval refusals (not re-run). |
 | Model | `gpt-5.6-luna` | `gpt-6-luna` |
 | Tasks × repeats | 10 live tasks × 3 | 10 live tasks × 3 |
 | How a pass was graded | substring checks on the files the agent left | file checks **and** the grader runs `bun test` itself, including a hidden test it writes after the agent stops |
