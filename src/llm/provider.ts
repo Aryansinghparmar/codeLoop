@@ -49,16 +49,6 @@ export interface LlmProvider {
   complete(request: LlmRequest, signal?: AbortSignal): Promise<LlmResponse>;
 }
 
-export function toolDefinitionToOpenAiFunction(tool: LlmToolDefinition): Record<string, unknown> {
-  return {
-    type: 'function',
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-    strict: false,
-  };
-}
-
 export const INVALID_JSON_KEY = '__invalidJson';
 
 // Contract: returns the parsed JSON object; empty input means no arguments ({}); anything else (bad JSON, arrays, primitives) returns { __invalidJson: '<first 200 chars>' } so the caller can tell the model.
