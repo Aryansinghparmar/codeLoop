@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ContextManager } from '../../src/context/context-manager';
 import type { LlmMessage } from '../../src/llm/provider';
 import { estimateTokens } from '../../src/shared/text';
+import { assertPairsIntact } from './pairs';
 
 const BUDGET = 32_000;
 
@@ -17,20 +18,6 @@ function toolPairs(prefix: string, count: number, outputChars: number): LlmMessa
 
 function tokens(messages: LlmMessage[]): number {
   return estimateTokens(JSON.stringify(messages));
-}
-
-/** Every tool output has an earlier parent call, and every call has a later output. */
-function assertPairsIntact(messages: LlmMessage[]): void {
-  messages.forEach((message, index) => {
-    if (message.role === 'tool') {
-      const parent = messages.slice(0, index).some((earlier) => earlier.toolCalls?.some((call) => call.id === message.toolCallId));
-      expect(parent ? 'ok' : `orphan output ${message.toolCallId}`).toBe('ok');
-    }
-    for (const call of message.toolCalls ?? []) {
-      const output = messages.slice(index + 1).some((later) => later.role === 'tool' && later.toolCallId === call.id);
-      expect(output ? 'ok' : `call without output ${call.id}`).toBe('ok');
-    }
-  });
 }
 
 describe('context manager', () => {

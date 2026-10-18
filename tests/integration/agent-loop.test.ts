@@ -1,11 +1,33 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createConfig } from '../../src/config/config';
+import { createConfig, type CodeLoopConfig } from '../../src/config/config';
 import { AgentLoop } from '../../src/agent/agent-loop';
-import { MockProvider, textResponse } from '../../src/llm/mock-provider';
+import { MockProvider, textResponse, type MockResponseFactory } from '../../src/llm/mock-provider';
+import type { LlmResponse, LlmToolCall } from '../../src/llm/provider';
+import { CodeLoopError } from '../../src/shared/errors';
 import { createBuiltinRegistry } from '../../src/tools/builtins';
+import { assertPairsIntact } from '../context/pairs';
 import { temporaryRoot, removeRoot } from '../helpers';
+
+function toolResponse(call: LlmToolCall): LlmResponse {
+  return { text: '', toolCalls: [call], usage: { inputTokens: 10, outputTokens: 5 }, provider: 'mock', model: 'mock' };
+}
+
+function createLoop(config: CodeLoopConfig, factory: MockResponseFactory): AgentLoop {
+  const builtins = createBuiltinRegistry(config);
+  return new AgentLoop(config, new MockProvider(factory), builtins.registry, builtins.pathGuard, builtins.permissionPolicy);
+}
+
+async function runFailure(loop: AgentLoop, prompt: string): Promise<CodeLoopError> {
+  try {
+    await loop.run(prompt);
+  } catch (error) {
+    if (error instanceof CodeLoopError) return error;
+    throw error;
+  }
+  throw new Error('Expected the run to fail.');
+}
 
 describe('agent loop', () => {
   test('executes a mock tool call and stops on final text', async () => {
@@ -22,6 +44,50 @@ describe('agent loop', () => {
       expect(result.text).toBe('Done.');
       expect(result.toolCalls).toBe(1);
       expect(await readFile(join(root, 'src', 'answer.ts'), 'utf8')).toContain('42');
+    } finally { await removeRoot(root); }
+  });
+
+  test('still completes with a tiny context budget, and every request keeps call/output pairs', async () => {
+    const root = await temporaryRoot();
+    try {
+      await writeFile(join(root, 'big.txt'), 'some file content line\n'.repeat(300), 'utf8');
+      const config: CodeLoopConfig = { ...createConfig(root), contextBudgetTokens: 2_000 };
+      const loop = createLoop(config, (request, index) => {
+        assertPairsIntact(request.messages);
+        expect(request.messages.some((message) => message.content === 'Read big.txt several times.')).toBe(true);
+        return index < 5 ? toolResponse({ id: `read-${index}`, name: 'read', arguments: { path: 'big.txt' } }) : textResponse('Done.');
+      });
+      const result = await loop.run('Read big.txt several times.');
+      expect(result.text).toBe('Done.');
+      expect(result.toolCalls).toBe(5);
+      expect(result.reductions).toBeGreaterThan(0);
+    } finally { await removeRoot(root); }
+  });
+
+  test('step limit failure keeps the details keys the evaluation runner reads', async () => {
+    const root = await temporaryRoot();
+    try {
+      await writeFile(join(root, 'a.txt'), 'hello\n', 'utf8');
+      const config: CodeLoopConfig = { ...createConfig(root), maxSteps: 2 };
+      const loop = createLoop(config, (_request, index) => toolResponse({ id: `read-${index}`, name: 'read', arguments: { path: 'a.txt' } }));
+      const error = await runFailure(loop, 'Keep reading.');
+      expect(error.code).toBe('STEP_LIMIT');
+      expect(Object.keys(error.details).sort()).toEqual([
+        'durationMs', 'failedToolCalls', 'inputTokens', 'model', 'outputTokens', 'provider',
+        'recoveredFailures', 'reductions', 'steps', 'toolCalls', 'totalTokens',
+      ]);
+      expect(error.details).toMatchObject({ provider: 'mock', model: 'mock', steps: 2, toolCalls: 2, failedToolCalls: 0, inputTokens: 20, outputTokens: 10, totalTokens: 30 });
+    } finally { await removeRoot(root); }
+  });
+
+  test('the same tool failure three times in a row stops the run', async () => {
+    const root = await temporaryRoot();
+    try {
+      const config = createConfig(root);
+      const loop = createLoop(config, (_request, index) => toolResponse({ id: `read-${index}`, name: 'read', arguments: { path: 'missing.txt' } }));
+      const error = await runFailure(loop, 'Read the missing file.');
+      expect(error.code).toBe('TOOL_ERROR');
+      expect(error.details).toMatchObject({ tool: 'read', steps: 3, toolCalls: 3, failedToolCalls: 3, recoveredFailures: 0 });
     } finally { await removeRoot(root); }
   });
 });

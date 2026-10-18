@@ -1,12 +1,12 @@
 import type { CodeLoopConfig } from '../config/config';
 import { ContextManager } from '../context/context-manager';
-import type { LlmMessage, LlmProvider, LlmToolCall } from '../llm/provider';
+import type { LlmMessage, LlmProvider, LlmResponse, LlmToolCall } from '../llm/provider';
 import type { PermissionPolicy, ApprovalFn } from '../permissions/permission-policy';
 import type { PathGuard } from '../permissions/path-guard';
-import { CodeLoopError, errorMessage } from '../shared/errors';
+import { CodeLoopError } from '../shared/errors';
 import type { ToolRegistry } from '../tools/registry';
-import type { ToolExecutionContext } from '../tools/tool';
-import { estimateProviderCost } from '../llm/pricing';
+import type { ToolExecutionContext, ToolResult } from '../tools/tool';
+import { createRunStats, recordResponse, statsDetails, type RunStats } from './run-stats';
 
 export interface AgentCallbacks {
   onText?: (text: string) => void;
@@ -46,138 +46,146 @@ export class AgentLoop {
     this.contextManager = new ContextManager(config.contextBudgetTokens);
   }
 
+  /**
+   * One task: compact -> call model -> stop if no tool calls -> execute tools -> check stops, repeated.
+   * Stops: no tool calls (done), maxSteps, same tool failure repeated, USD budget, provider error, abort.
+   */
   public async run(prompt: string, callbacks: AgentCallbacks = {}, signal?: AbortSignal, history: LlmMessage[] = []): Promise<AgentRunResult> {
-    const started = Date.now();
     const messages: LlmMessage[] = history.length > 0
       ? [...history, { role: 'user', content: prompt }]
       : [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: prompt }];
-    let steps = 0;
-    let toolCalls = 0;
-    let failedToolCalls = 0;
-    let recoveredFailures = 0;
-    let reductions = 0;
-    let lastFailure = '';
-    let repeatedFailures = 0;
-    let lastResponse = { provider: this.provider.name, model: 'unknown' };
-    const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-    let estimatedCostUsd: number | undefined;
+    const stats = createRunStats(this.provider.name);
+    const failures = new RepeatedFailureTracker(this.config.maxRepeatedFailures);
 
-    while (steps < this.config.maxSteps) {
-      if (signal?.aborted) throw this.failure('TOOL_ERROR', 'The task was cancelled.', started, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, lastResponse, estimatedCostUsd);
-      steps += 1;
-      const reduction = this.contextManager.reduce(messages);
-      if (reduction.reduced) {
-        reductions += 1;
-        messages.splice(0, messages.length, ...reduction.messages);
+    while (stats.steps < this.config.maxSteps) {
+      if (signal?.aborted) throw this.failure('TOOL_ERROR', 'The task was cancelled.', stats);
+      stats.steps += 1;
+      this.compact(messages, stats);
+
+      const response = await this.callModel(messages, stats, signal);
+      if (stats.estimatedCostUsd !== undefined && stats.estimatedCostUsd > this.config.liveTaskBudgetUsd) {
+        throw this.failure('PROVIDER_ERROR', `The live task budget of $${this.config.liveTaskBudgetUsd.toFixed(2)} was reached.`, stats);
       }
-      let response;
-      try {
-        response = await this.provider.complete({
-          messages,
-          tools: this.tools.definitions(),
-          maxOutputTokens: this.config.modelOutputTokens,
-          reasoningEffort: 'low',
-        }, signal);
-      } catch (error) {
-        throw this.failureFromError(error, started, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, lastResponse, estimatedCostUsd);
-      }
-      lastResponse = { provider: response.provider, model: response.model };
-      usage.inputTokens += response.usage.inputTokens ?? 0;
-      usage.outputTokens += response.usage.outputTokens ?? 0;
-      usage.totalTokens += response.usage.totalTokens ?? ((response.usage.inputTokens ?? 0) + (response.usage.outputTokens ?? 0));
-      estimatedCostUsd = estimateProviderCost(response.provider, response.model, { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens });
-      if (estimatedCostUsd !== undefined && estimatedCostUsd > this.config.liveTaskBudgetUsd) {
-        throw this.failure('PROVIDER_ERROR', `The live task budget of $${this.config.liveTaskBudgetUsd.toFixed(2)} was reached.`, started, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, lastResponse, estimatedCostUsd);
-      }
-      const assistantMessage: LlmMessage = { role: 'assistant', content: response.text };
-      if (response.toolCalls.length) assistantMessage.toolCalls = response.toolCalls;
-      messages.push(assistantMessage);
+      messages.push(assistantMessage(response));
       if (response.text) callbacks.onText?.(response.text);
-      if (response.toolCalls.length === 0) {
-        return { text: response.text, messages, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}), ...lastResponse, durationMs: Date.now() - started };
-      }
+      if (response.toolCalls.length === 0) return this.success(response.text, messages, stats);
 
       for (const call of response.toolCalls) {
-        toolCalls += 1;
-        callbacks.onToolCall?.(call);
-        const context: ToolExecutionContext = {
-          projectRoot: this.config.projectRoot,
-          pathGuard: this.pathGuard,
-          permissionPolicy: this.permissionPolicy,
-        };
-        if (callbacks.approve) context.approve = callbacks.approve;
-        if (signal) context.signal = signal;
-        const result = await this.tools.execute(call.name, call.arguments, context);
-        callbacks.onToolResult?.(call, result);
+        stats.toolCalls += 1;
+        const result = await this.executeToolCall(call, callbacks, signal);
         messages.push({ role: 'tool', content: result.content, toolCallId: call.id, name: call.name });
-        if (!result.ok) {
-          failedToolCalls += 1;
-          const failureKey = `${call.name}:${result.content}`;
-          if (failureKey === lastFailure) repeatedFailures += 1;
-          else {
-            if (lastFailure) recoveredFailures += 1;
-            lastFailure = failureKey;
-            repeatedFailures = 1;
-          }
-          if (repeatedFailures >= this.config.maxRepeatedFailures) {
-            throw this.failure('TOOL_ERROR', `The same tool failure repeated ${repeatedFailures} times.`, started, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, lastResponse, estimatedCostUsd, { tool: call.name });
-          }
-        } else if (lastFailure) {
-          recoveredFailures += 1;
-          lastFailure = '';
-          repeatedFailures = 0;
+        if (!result.ok) stats.failedToolCalls += 1;
+        const verdict = failures.record(call, result);
+        stats.recoveredFailures = failures.recoveredFailures;
+        if (verdict === 'abort') {
+          throw this.failure('TOOL_ERROR', `The same tool failure repeated ${failures.repeats} times.`, stats, { tool: call.name });
         }
       }
     }
-    throw this.failure('STEP_LIMIT', `The agent stopped after ${this.config.maxSteps} steps.`, started, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, lastResponse, estimatedCostUsd);
+    throw this.failure('STEP_LIMIT', `The agent stopped after ${this.config.maxSteps} steps.`, stats);
   }
 
-  private failure(
-    code: ConstructorParameters<typeof CodeLoopError>[0],
-    message: string,
-    started: number,
-    steps: number,
-    toolCalls: number,
-    failedToolCalls: number,
-    recoveredFailures: number,
-    reductions: number,
-    usage: { inputTokens: number; outputTokens: number; totalTokens: number },
-    lastResponse: { provider: string; model: string },
-    estimatedCostUsd: number | undefined,
-    details: Record<string, unknown> = {},
-  ): CodeLoopError {
-    return new CodeLoopError(code, message, {
-      ...details,
-      provider: lastResponse.provider,
-      model: lastResponse.model,
-      durationMs: Date.now() - started,
-      steps,
-      toolCalls,
-      failedToolCalls,
-      recoveredFailures,
-      reductions,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      totalTokens: usage.totalTokens,
-      ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
-    });
+  /** Shrinks the history in place when it is over the context budget (see ContextManager). */
+  private compact(messages: LlmMessage[], stats: RunStats): void {
+    const reduction = this.contextManager.reduce(messages);
+    if (!reduction.reduced) return;
+    stats.reductions += 1;
+    messages.splice(0, messages.length, ...reduction.messages);
   }
 
-  private failureFromError(
-    error: unknown,
-    started: number,
-    steps: number,
-    toolCalls: number,
-    failedToolCalls: number,
-    recoveredFailures: number,
-    reductions: number,
-    usage: { inputTokens: number; outputTokens: number; totalTokens: number },
-    lastResponse: { provider: string; model: string },
-    estimatedCostUsd: number | undefined,
-  ): CodeLoopError {
+  private async callModel(messages: LlmMessage[], stats: RunStats, signal?: AbortSignal): Promise<LlmResponse> {
+    let response: LlmResponse;
+    try {
+      response = await this.provider.complete({
+        messages,
+        tools: this.tools.definitions(),
+        maxOutputTokens: this.config.modelOutputTokens,
+        reasoningEffort: 'low',
+      }, signal);
+    } catch (error) {
+      throw this.failureFromError(error, stats);
+    }
+    recordResponse(stats, response);
+    return response;
+  }
+
+  private async executeToolCall(call: LlmToolCall, callbacks: AgentCallbacks, signal?: AbortSignal): Promise<ToolResult> {
+    callbacks.onToolCall?.(call);
+    const context: ToolExecutionContext = {
+      projectRoot: this.config.projectRoot,
+      pathGuard: this.pathGuard,
+      permissionPolicy: this.permissionPolicy,
+    };
+    if (callbacks.approve) context.approve = callbacks.approve;
+    if (signal) context.signal = signal;
+    const result = await this.tools.execute(call.name, call.arguments, context);
+    callbacks.onToolResult?.(call, result);
+    return result;
+  }
+
+  private success(text: string, messages: LlmMessage[], stats: RunStats): AgentRunResult {
+    return {
+      text,
+      messages,
+      steps: stats.steps,
+      toolCalls: stats.toolCalls,
+      failedToolCalls: stats.failedToolCalls,
+      recoveredFailures: stats.recoveredFailures,
+      reductions: stats.reductions,
+      usage: stats.usage,
+      ...(stats.estimatedCostUsd !== undefined ? { estimatedCostUsd: stats.estimatedCostUsd } : {}),
+      ...stats.lastResponse,
+      durationMs: Date.now() - stats.startedAt,
+    };
+  }
+
+  private failure(code: ConstructorParameters<typeof CodeLoopError>[0], message: string, stats: RunStats, extraDetails: Record<string, unknown> = {}): CodeLoopError {
+    return new CodeLoopError(code, message, { ...extraDetails, ...statsDetails(stats) });
+  }
+
+  private failureFromError(error: unknown, stats: RunStats): CodeLoopError {
     const code = error instanceof CodeLoopError ? error.code : 'PROVIDER_ERROR';
     const message = error instanceof Error ? error.message : String(error);
     const details = error instanceof CodeLoopError ? error.details : {};
-    return this.failure(code, message, started, steps, toolCalls, failedToolCalls, recoveredFailures, reductions, usage, lastResponse, estimatedCostUsd, details);
+    return this.failure(code, message, stats, details);
+  }
+}
+
+function assistantMessage(response: LlmResponse): LlmMessage {
+  const message: LlmMessage = { role: 'assistant', content: response.text };
+  if (response.toolCalls.length) message.toolCalls = response.toolCalls;
+  return message;
+}
+
+/**
+ * Stops the run when the same tool fails with the same output `maxRepeats` times in a row.
+ * Also counts recovered failures: a failure followed by a success or by a different failure.
+ */
+export class RepeatedFailureTracker {
+  private lastFailure = '';
+  private repeatCount = 0;
+  private recovered = 0;
+
+  public constructor(private readonly maxRepeats: number) {}
+
+  public get repeats(): number { return this.repeatCount; }
+  public get recoveredFailures(): number { return this.recovered; }
+
+  public record(call: LlmToolCall, result: ToolResult): 'abort' | 'continue' {
+    if (result.ok) {
+      if (this.lastFailure) this.recovered += 1;
+      this.lastFailure = '';
+      this.repeatCount = 0;
+      return 'continue';
+    }
+    const failureKey = `${call.name}:${result.content}`;
+    if (failureKey === this.lastFailure) {
+      this.repeatCount += 1;
+    } else {
+      if (this.lastFailure) this.recovered += 1;
+      this.lastFailure = failureKey;
+      this.repeatCount = 1;
+    }
+    return this.repeatCount >= this.maxRepeats ? 'abort' : 'continue';
   }
 }
