@@ -65,7 +65,7 @@ bun run start             # interactive session in the current folder
 | `bun run eval` | 12 scripted tasks with a fake process runner (checks the harness, not the model) | No |
 | `bun run eval:context` | Compaction benchmark on a synthetic 38-message history | No |
 | `bun run eval:summarize --dir <folder>` | Recompute pass rate, latency, trace stats and bounds from stored results | No |
-| `bun run eval:live` / `eval:repeat` | Live tasks against the API (writes to a new timestamped folder) | Yes, and `CODELOOP_LIVE_CONFIRM=yes` |
+| `bun run eval:live` / `eval:repeat` | Live tasks against the API (writes to a new timestamped folder). `CODELOOP_EVAL_SUITE=v2` runs the 19 harder v2 tasks (`src/evaluation/tasks-v2.ts`); unset runs the original 10 | Yes, and `CODELOOP_LIVE_CONFIRM=yes` |
 
 ## Measured results
 

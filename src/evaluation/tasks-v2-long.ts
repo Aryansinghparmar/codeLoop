@@ -303,8 +303,8 @@ function staffRow(index: number, random: () => number): string {
   return `['E${pad(index, 5)}', '${pick(random, departments)}', 'grade ${Math.floor(random() * 9 + 1)}', ${2015 + Math.floor(random() * 11)}]`;
 }
 
-/** How many table rows each half of a report file gets: about 62K characters per file. */
-const REPORT_ROWS = 700;
+/** How many table rows each half of a report file gets: about 50K characters per file, three read chunks each. */
+const REPORT_ROWS = 600;
 
 export function salesReportSource(): string {
   return [
