@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { CodeLoopConfig } from '../config/config';
 import { truncateMiddle } from '../shared/text';
-import { stringArg, type Tool } from './tool';
+import { authorize, stringArg, type Tool } from './tool';
 
 export function createReadTool(config: CodeLoopConfig): Tool {
   return {
@@ -18,8 +18,8 @@ export function createReadTool(config: CodeLoopConfig): Tool {
     async execute(args, context) {
       const input = stringArg(args, 'path');
       const path = context.pathGuard.resolveInside(input);
-      const permission = context.permissionPolicy.evaluate({ action: 'read', target: path });
-      if (permission.decision !== 'allow') return { ok: false, content: `Read denied: ${permission.reason}` };
+      const blocked = await authorize(context, { action: 'read', target: path });
+      if (blocked) return blocked;
       const text = readFileSync(path, 'utf8');
       const startLine = typeof args.startLine === 'number' && args.startLine > 0 ? Math.floor(args.startLine) : 1;
       const endLine = typeof args.endLine === 'number' && args.endLine >= startLine ? Math.floor(args.endLine) : undefined;

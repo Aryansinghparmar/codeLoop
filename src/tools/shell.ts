@@ -2,7 +2,7 @@ import type { CodeLoopConfig } from '../config/config';
 import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
 import type { ProcessRunner } from '../infrastructure/process/process-runner';
 import { truncateMiddle } from '../shared/text';
-import { stringArg, type Tool } from './tool';
+import { authorize, stringArg, type Tool } from './tool';
 
 export function createShellTool(config: CodeLoopConfig, runner: ProcessRunner = new NativeProcessRunner()): Tool {
   return {
@@ -18,11 +18,8 @@ export function createShellTool(config: CodeLoopConfig, runner: ProcessRunner = 
     },
     async execute(args, context) {
       const command = stringArg(args, 'command');
-      const permission = context.permissionPolicy.evaluate({ action: 'shell', target: command });
-      if (permission.decision === 'deny') return { ok: false, content: `Shell denied: ${permission.reason}` };
-      if (permission.decision === 'confirm' && !(await context.approve?.({ action: 'shell', target: command, detail: permission.reason }))) {
-        return { ok: false, content: 'Shell command rejected by the user.' };
-      }
+      const blocked = await authorize(context, { action: 'shell', target: command });
+      if (blocked) return blocked;
       const requestedTimeout = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : config.processTimeoutMs;
       const timeoutMs = Math.min(requestedTimeout, 300_000);
       const processOptions: { cwd: string; timeoutMs: number; signal?: AbortSignal } = { cwd: context.projectRoot, timeoutMs };

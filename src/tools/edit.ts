@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { stringArg, textArg, type Tool } from './tool';
+import { authorize, stringArg, textArg, type Tool } from './tool';
 
 export const editTool: Tool = {
   definition: {
@@ -17,11 +17,8 @@ export const editTool: Tool = {
     const oldText = stringArg(args, 'oldText');
     const newText = textArg(args, 'newText');
     const path = context.pathGuard.resolveInside(input);
-    const permission = context.permissionPolicy.evaluate({ action: 'edit', target: path, detail: `edit ${oldText.length} characters` });
-    if (permission.decision === 'deny') return { ok: false, content: `Edit denied: ${permission.reason}` };
-    if (permission.decision === 'confirm' && !(await context.approve?.({ action: 'edit', target: path, detail: permission.reason }))) {
-      return { ok: false, content: 'Edit rejected by the user.' };
-    }
+    const blocked = await authorize(context, { action: 'edit', target: path, detail: `edit ${oldText.length} characters` });
+    if (blocked) return blocked;
     const current = readFileSync(path, 'utf8');
     const occurrences = current.split(oldText).length - 1;
     if (occurrences !== 1) {
