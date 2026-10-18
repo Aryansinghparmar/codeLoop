@@ -29,7 +29,8 @@ export function createShellTool(config: CodeLoopConfig, runner: ProcessRunner = 
       const output = truncateMiddle(combined, config.shellOutputMaxChars);
       return {
         ok: result.exitCode === 0 && !result.timedOut,
-        content: JSON.stringify({ ...result, output: output.text, truncated: output.truncated }),
+        // Only the capped `output` goes to the model; the raw stdout/stderr would bypass shellOutputMaxChars.
+        content: JSON.stringify({ exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, durationMs: result.durationMs, output: output.text, truncated: output.truncated }),
         truncated: output.truncated,
         metadata: { exitCode: result.exitCode, durationMs: result.durationMs, timedOut: result.timedOut },
       };

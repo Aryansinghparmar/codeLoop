@@ -45,3 +45,21 @@ describe('shell tool', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe('shell output cap', () => {
+  test('the model never receives more than shellOutputMaxChars of command output', async () => {
+    const huge = 'x'.repeat(50_000);
+    const root = await temporaryRoot();
+    try {
+      const config = createConfig(root);
+      const runner = { async run() { return { stdout: huge, stderr: huge, exitCode: 0, signal: null, timedOut: false as const, durationMs: 1 }; } };
+      const builtins = createBuiltinRegistry(config, runner);
+      const result = await builtins.registry.execute('shell', { command: 'git status' }, { projectRoot: root, pathGuard: builtins.pathGuard, permissionPolicy: builtins.permissionPolicy });
+      const parsed = JSON.parse(result.content) as Record<string, unknown>;
+      expect(parsed.stdout).toBeUndefined();
+      expect(parsed.stderr).toBeUndefined();
+      expect(parsed.truncated).toBe(true);
+      expect(result.content.length).toBeLessThan(config.shellOutputMaxChars + 500);
+    } finally { await removeRoot(root); }
+  });
+});
