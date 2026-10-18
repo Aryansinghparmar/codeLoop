@@ -89,14 +89,14 @@ Read [`evals/published/README.md`](evals/published/README.md) before quoting the
 What it does:
 - **Path containment (file tools).** Every path given to `read`, `write` or `edit` is resolved with `realpathSync.native` (so symlinks and junctions are followed) and must stay inside the project root. `.env`, `.git`, keys and system paths are always denied, and NTFS alternate streams are rejected.
 - **Three permission tiers.**
-  - **allow:** read-only commands with plain arguments (`git status/diff/log/show`, plain `ls`/`dir`, `pwd`, plain `echo`, `tsc --noEmit`); edits inside `src/` and `tests/`; and creating new non-config files.
+  - **allow:** read-only commands (`git status/diff/log/show`, plain `ls`/`dir`, `pwd`, plain `echo`, `tsc --noEmit`) written in plain ASCII with no quoting or escapes, where every argument also passes PathGuard; edits inside `src/` and `tests/`; and creating new non-config files.
   - **confirm:** anything that runs project code (`bun test`, `bun run`, `node`); chaining, redirection, quoting, wildcards and variables; edits to config files, or overwriting existing files outside `src/` and `tests/`.
   - **deny:** destructive commands, environment dumps, and references to protected files, including ones disguised with shell quoting such as `.en''v`.
   - With no approver available, confirm means rejected (fail closed).
 - **Process hygiene.** Shell children get an allowlisted environment with API keys removed. Timeouts kill the whole process tree.
 - **Output hygiene.** Tool results and session logs are redacted for common secret formats.
 
-What it is not: **a sandbox.** Shell classification is regex-based and can be evaded. Code you approve runs with your user's permissions. Allow-tier `git` commands honour the repository's own git config. Token counts in compaction are `chars/4` estimates. For untrusted repositories, run it in a container or VM. A project's `.env` may set CodeLoop options, but never `OPENAI_BASE_URL`; set that in your shell.
+What it is not: **a sandbox.** Shell classification is regex-based and can be evaded. Code you approve runs with your user's permissions. Allow-tier `git` commands honour the repository's own git config. Token counts in compaction are `chars/4` estimates. For untrusted repositories, run it in a container or VM. A project's `.env` is read only for `CODELOOP_*`, `OPENAI_API_KEY` and `OPENAI_MODEL`. Anything else (`OPENAI_BASE_URL`, proxies, TLS settings) must be set in your shell.
 
 ## Limitations and next steps
 - No read-only search tool (grep/glob/list), so code search goes through shell and often needs approval. The slowest runs (a rename task, up to 77 s) are spent guessing file paths. The P95 sample itself is a run with no failed calls, so it reflects provider latency.
