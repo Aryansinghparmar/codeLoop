@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createConfig, type CodeLoopConfig } from '../../src/config/config';
-import { AgentLoop } from '../../src/agent/agent-loop';
+import { AgentLoop, buildSystemPrompt } from '../../src/agent/agent-loop';
 import { MockProvider, textResponse, type MockResponseFactory } from '../../src/llm/mock-provider';
 import type { LlmResponse, LlmToolCall } from '../../src/llm/provider';
 import { CodeLoopError } from '../../src/shared/errors';
@@ -78,6 +78,18 @@ describe('agent loop', () => {
       ]);
       expect(error.details).toMatchObject({ provider: 'mock', model: 'mock', steps: 2, toolCalls: 2, failedToolCalls: 0, inputTokens: 20, outputTokens: 10, totalTokens: 30 });
     } finally { await removeRoot(root); }
+  });
+
+  test('system prompt names the OS, shell, project root, date and test runner', () => {
+    const windows = buildSystemPrompt('C:\\repo', 'win32', new Date('2026-10-18T12:00:00Z'));
+    expect(windows).toContain('win32');
+    expect(windows).toContain('PowerShell');
+    expect(windows).toContain('C:\\repo');
+    expect(windows).toContain('2026-10-18');
+    expect(windows).toContain('`bun test`');
+    expect(windows).toContain('denied');
+    expect(buildSystemPrompt('/repo', 'linux')).toContain('run in sh');
+    expect(windows.split('\n').length).toBeLessThanOrEqual(15);
   });
 
   test('the same tool failure three times in a row stops the run', async () => {

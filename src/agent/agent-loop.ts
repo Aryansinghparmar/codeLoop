@@ -30,8 +30,21 @@ export interface AgentRunResult {
   estimatedCostUsd?: number;
 }
 
-const SYSTEM_PROMPT = `You are CodeLoop, a safe terminal coding agent.
-Work only inside the current project. Use read before edit. Use edit for existing files and write for new files. Use shell only when needed. Never expose secrets. Stop when the task is complete and report the evidence.`;
+/** Tells the model where it runs, so it does not guess POSIX commands or `npm test` on Windows. */
+export function buildSystemPrompt(projectRoot: string, platform: string = process.platform, today: Date = new Date()): string {
+  const shell = platform === 'win32' ? 'PowerShell' : 'sh';
+  return [
+    'You are CodeLoop, a safe terminal coding agent.',
+    `OS: ${platform}. Shell commands run in ${shell}, so write ${shell} syntax.`,
+    `Project root: ${projectRoot}. Work only inside it; tool paths are relative to it.`,
+    `Today is ${today.toISOString().slice(0, 10)}.`,
+    'The test runner is `bun test`.',
+    'Read a file before editing it. Use edit for existing files and write for new files.',
+    'Use shell only when needed.',
+    'The user may deny commands; if a command is denied, try another approach or explain why you cannot continue.',
+    'Never expose secrets. Stop when the task is complete and report the evidence.',
+  ].join('\n');
+}
 
 export class AgentLoop {
   private readonly contextManager: ContextManager;
@@ -53,7 +66,7 @@ export class AgentLoop {
   public async run(prompt: string, callbacks: AgentCallbacks = {}, signal?: AbortSignal, history: LlmMessage[] = []): Promise<AgentRunResult> {
     const messages: LlmMessage[] = history.length > 0
       ? [...history, { role: 'user', content: prompt }]
-      : [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: prompt }];
+      : [{ role: 'system', content: buildSystemPrompt(this.config.projectRoot) }, { role: 'user', content: prompt }];
     const stats = createRunStats(this.provider.name);
     const failures = new RepeatedFailureTracker(this.config.maxRepeatedFailures);
 
