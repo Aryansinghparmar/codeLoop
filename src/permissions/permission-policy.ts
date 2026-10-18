@@ -63,6 +63,7 @@ export const SHELL_RULES: readonly PermissionRule[] = [
   confirm('runs-project-code', 'The command runs project code, which the agent can write.', commandWord('bun|bunx|npm|npx|pnpm|yarn|node|deno|tsx|ts-node|python|python3|py')),
   confirm('nested-shell', 'The command starts another shell.', commandWord('powershell|pwsh|cmd|sh|bash|zsh')),
   confirm('write-or-preload-flag', 'The command uses a flag that writes a file or preloads code.', /--(?:output|out-file|preload|require|import|ext-diff|textconv)(?![\w-])/iu),
+  confirm('obfuscation-or-indirection', 'The command uses quotes, escapes, wildcards, variables or 8.3 short names, which can hide a protected path.', /['"`^*?$‘’“”]|(?<!\bHEAD|@)~\d|--no-index\b/u),
   confirm('parent-directory', 'The command references the parent directory.', /(?<![\w.])\.\.(?![\w.])/u),
   confirm('absolute-path', 'The command uses an absolute path.', /(?:^|[\s"'=(,])[\\/]/u),
   confirm('list-unsafe-argument', 'The listing argument is not a plain relative path.', /^(?:ls|dir|gci|get-childitem)\s+(?![\w.][\w.\\/-]*$)/iu),
@@ -78,7 +79,14 @@ export const SHELL_RULES: readonly PermissionRule[] = [
 
 const TIER_ORDER: readonly PermissionDecision[] = ['deny', 'confirm', 'allow'];
 
+// Shells drop these characters when they parse a word, so `.en''v`, `.e"n"v` and `.en^v` all mean `.env`.
+const SHELL_QUOTING = /['"`^‘’“”]/gu;
+const SECRET_RULE_IDS = new Set(['protected-file-reference', 'environment-variable', 'environment-dump']);
+
 export function classifyCommand(command: string): PermissionResult {
+  const unquoted = command.replace(SHELL_QUOTING, '');
+  const hidden = SHELL_RULES.find((rule) => SECRET_RULE_IDS.has(rule.id) && rule.pattern.test(unquoted));
+  if (hidden) return { decision: 'deny', reason: hidden.reason, ruleId: hidden.id };
   for (const decision of TIER_ORDER) {
     const rule = SHELL_RULES.find((candidate) => candidate.decision === decision && candidate.pattern.test(command));
     if (rule) return { decision, reason: rule.reason, ruleId: rule.id };

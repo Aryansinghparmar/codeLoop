@@ -29,6 +29,22 @@ const previouslyBypassed: Row[] = [
   ['bun test @(Get-Content README.md)', 'confirm'],
   ['bun test & Get-Content README.md', 'confirm'],
   ['bun test tests/rm.test.ts', 'confirm'],
+  // Found by the re-audit: quoting hid protected names from the deny rules, and `git diff` was auto-allowed.
+  ["git diff --no-index src/a.txt .en''v", 'deny'],
+  ['git diff --no-index src/a.txt .e""nv', 'deny'],
+  ['git diff --no-index src/a.txt .en’’v', 'deny'],
+  ["git show HEAD:.en''v", 'deny'],
+  ["git show HEAD:.g''it/config", 'deny'],
+  ['cmd /c type .en^v', 'deny'],
+  ["gc .en''v", 'deny'],
+  ['type .en""v', 'deny'],
+  ['git diff --no-index src/a.txt src/b.txt', 'confirm'],
+  ['git diff --no-index src/a.txt $PROFILE', 'confirm'],
+  ['gc ENV~1', 'confirm'],
+  ['git diff ENV~1', 'confirm'],
+  ['gc .\\.e*', 'confirm'],
+  ['Get-Content -Path .\\.e*', 'confirm'],
+  ['[IO.File]::ReadAllText(".e"+"nv")', 'confirm'],
 ];
 
 const denied: Row[] = [
