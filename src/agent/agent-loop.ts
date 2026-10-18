@@ -1,6 +1,6 @@
 import type { CodeLoopConfig } from '../config/config';
 import { ContextManager } from '../context/context-manager';
-import type { LlmMessage, LlmProvider, LlmResponse, LlmToolCall } from '../llm/provider';
+import { INVALID_JSON_KEY, type LlmMessage, type LlmProvider, type LlmResponse, type LlmToolCall } from '../llm/provider';
 import type { PermissionPolicy, ApprovalFn } from '../permissions/permission-policy';
 import type { PathGuard } from '../permissions/path-guard';
 import { CodeLoopError } from '../shared/errors';
@@ -170,9 +170,9 @@ export class AgentLoop {
   }
 }
 
-/** The provider marks unparseable tool arguments with an `__invalidJson` key (see parseJsonObject). */
+/** The provider marks unparseable tool arguments with INVALID_JSON_KEY (see parseJsonObject). */
 function hasInvalidJsonArguments(call: LlmToolCall): boolean {
-  return typeof call.arguments === 'object' && call.arguments !== null && '__invalidJson' in call.arguments;
+  return typeof call.arguments === 'object' && call.arguments !== null && INVALID_JSON_KEY in call.arguments;
 }
 
 function assistantMessage(response: LlmResponse): LlmMessage {
