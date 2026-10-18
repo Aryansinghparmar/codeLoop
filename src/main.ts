@@ -61,7 +61,7 @@ async function main(): Promise<void> {
           onToolResult: (call, toolResult) => { console.log(toolResult.ok ? '  ✓ tool completed' : `  ✗ ${toolResult.content}`); sessionStore.append(event(session.id, 'tool_result', { name: call.name, ok: toolResult.ok, content: redactSecrets(toolResult.content) })); },
           approve: async (request) => {
             const answer = (await readline.question(`Allow ${request.action} ${request.target}? [y/N] `)).trim().toLowerCase();
-            sessionStore.append(event(session.id, 'permission', { action: request.action, target: request.target, approved: answer === 'y' || answer === 'yes' }));
+            sessionStore.append(event(session.id, 'permission', { action: request.action, target: redactSecrets(request.target), approved: answer === 'y' || answer === 'yes' }));
             return answer === 'y' || answer === 'yes';
           },
         }, undefined, conversation);
