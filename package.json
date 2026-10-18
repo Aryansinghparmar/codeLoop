@@ -12,7 +12,8 @@
     "eval": "bun run src/evaluation/cli.ts",
     "eval:context": "bun run src/evaluation/context-cli.ts",
     "eval:live": "bun run src/evaluation/live-cli.ts",
-    "eval:repeat": "bun run src/evaluation/repeat-cli.ts"
+    "eval:repeat": "bun run src/evaluation/repeat-cli.ts",
+    "eval:summarize": "bun run src/evaluation/summarize-cli.ts"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

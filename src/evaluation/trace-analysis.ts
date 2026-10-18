@@ -1,0 +1,37 @@
+// Reads the `toolTrace` lines written by EvaluationRunner. Each tool call is
+// recorded as `call <tool> <json args>` and is immediately followed by its
+// result line, `ok <tool>: ...` or `fail <tool>: ...`.
+
+const TEST_COMMAND = /^(?:npx\s+)?(?:bun|npm|yarn|pnpm)\s+(?:run\s+)?test\b/iu;
+const REJECTED_SHELL = 'fail shell: Shell command rejected by the user.';
+
+export function shellCommandOf(entry: string): string | undefined {
+  if (!entry.startsWith('call shell ')) return undefined;
+  const match = /"command":"((?:[^"\\]|\\.)*)/u.exec(entry);
+  return match?.[1]?.replace(/\\"/gu, '"').replace(/\\\\/gu, '\\');
+}
+
+export function isTestCommand(command: string): boolean {
+  return TEST_COMMAND.test(command.trim());
+}
+
+/** True when the agent itself issued a test command that ran and exited 0. */
+export function agentRanTests(trace: string[] = []): boolean {
+  return trace.some((entry, index) => {
+    const command = shellCommandOf(entry);
+    return command !== undefined && isTestCommand(command) && (trace[index + 1] ?? '').startsWith('ok shell');
+  });
+}
+
+/** True when the agent issued a test command at all, whether or not it ran. */
+export function agentAttemptedTests(trace: string[] = []): boolean {
+  return trace.some((entry) => {
+    const command = shellCommandOf(entry);
+    return command !== undefined && isTestCommand(command);
+  });
+}
+
+/** Shell calls that needed approval and were turned down by the eval's approve callback. */
+export function countRejectedShellCalls(trace: string[] = []): number {
+  return trace.filter((entry) => entry === REJECTED_SHELL).length;
+}
