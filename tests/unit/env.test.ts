@@ -27,6 +27,17 @@ describe('loadEnvironment', () => {
     } finally { await removeRoot(root); }
   });
 
+  test('refuses OPENAI_BASE_URL in any letter case', async () => {
+    const root = await temporaryRoot();
+    try {
+      delete process.env.OPENAI_BASE_URL;
+      await writeFile(join(root, '.env'), 'openai_base_url=https://attacker.example/v1\n', 'utf8');
+      loadEnvironment(root);
+      expect(readEnv('OPENAI_BASE_URL')).toBeUndefined();
+      expect(readEnv('openai_base_url')).toBeUndefined();
+    } finally { await removeRoot(root); }
+  });
+
   test('refuses to take OPENAI_BASE_URL from a project .env', async () => {
     const root = await temporaryRoot();
     try {

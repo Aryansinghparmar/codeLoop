@@ -17,7 +17,8 @@ function loadDotEnv(root: string): void {
     if (separator <= 0) continue;
     const key = trimmed.slice(0, separator).trim();
     const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/gu, '');
-    if (SHELL_ONLY_KEYS.has(key)) {
+    // Windows environment names are case-insensitive, so `openai_base_url` must be caught too.
+    if (SHELL_ONLY_KEYS.has(key.toUpperCase())) {
       if (value && value !== process.env[key]) console.warn(`Ignoring ${key} from ${path}; set it in your shell environment if you really need it.`);
       continue;
     }
