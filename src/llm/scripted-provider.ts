@@ -1,6 +1,6 @@
 import type { LlmProvider, LlmRequest, LlmResponse, LlmToolCall } from './provider';
 
-export class ScriptedCodingProvider implements LlmProvider {
+export class ScriptedProvider implements LlmProvider {
   public readonly name = 'mock-scripted';
 
   public complete(request: LlmRequest): Promise<LlmResponse> {

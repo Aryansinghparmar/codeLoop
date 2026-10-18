@@ -4,7 +4,7 @@ import { EvaluationRunner } from '../../src/evaluation/runner';
 import { fixedTasks } from '../../src/evaluation/fixed-tasks';
 import { NativeProcessRunner } from '../../src/infrastructure/process/native-process-runner';
 import type { LlmProvider, LlmToolCall } from '../../src/llm/provider';
-import { ScriptedCodingProvider } from '../../src/llm/scripted-provider';
+import { ScriptedProvider } from '../../src/llm/scripted-provider';
 
 /** Plays back fixed tool calls, one per step, then stops. */
 function scriptedEdits(calls: LlmToolCall[]): LlmProvider {
@@ -23,7 +23,7 @@ const graderRunner = new NativeProcessRunner();
 
 describe('test-executing grader', () => {
   test('passes a correct fix only after really running bun test', async () => {
-    const [result] = await new EvaluationRunner(createConfig()).run(new ScriptedCodingProvider(), countTask, undefined, { graderRunner });
+    const [result] = await new EvaluationRunner(createConfig()).run(new ScriptedProvider(), countTask, undefined, { graderRunner });
     expect(result?.testsExecuted).toBe(true);
     expect(result?.testsPassed).toBe(true);
     expect(result?.assertionsPassed).toBe(true);
@@ -43,7 +43,7 @@ describe('test-executing grader', () => {
   }, 60_000);
 
   test('says so when the offline suite does not execute tests', async () => {
-    const [result] = await new EvaluationRunner(createConfig()).run(new ScriptedCodingProvider(), countTask);
+    const [result] = await new EvaluationRunner(createConfig()).run(new ScriptedProvider(), countTask);
     expect(result?.testsExecuted).toBe(false);
     expect(result?.testsPassed).toBeUndefined();
     expect(result?.assertionDetails).toContain('grader tests not executed (offline run)');

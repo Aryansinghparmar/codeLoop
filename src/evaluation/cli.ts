@@ -1,6 +1,6 @@
 import { createConfig } from '../config/config';
 import { loadEnvironment } from '../config/env';
-import { ScriptedCodingProvider } from '../llm/scripted-provider';
+import { ScriptedProvider } from '../llm/scripted-provider';
 import { EvaluationRunner } from './runner';
 import { fixedTasks } from './fixed-tasks';
 import { report } from './report-generator';
@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 const root = process.cwd();
 loadEnvironment(root);
-const provider = new ScriptedCodingProvider();
+const provider = new ScriptedProvider();
 const results = await new EvaluationRunner(createConfig(root)).run(provider, fixedTasks);
 const summary = report(results);
 writeRawResults(join(root, 'evals', 'results', 'offline.jsonl'), results);
