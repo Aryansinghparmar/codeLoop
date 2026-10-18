@@ -15,10 +15,13 @@
     "eval:repeat": "bun run src/evaluation/repeat-cli.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/react": "latest",
-    "ink": "latest",
-    "react": "latest",
-    "typescript": "latest"
+    "@types/bun": "1.3.14",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "openai": "7.38.0"
+  },
+  "engines": {
+    "bun": ">=1.3.10"
   }
 }
