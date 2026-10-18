@@ -33,7 +33,7 @@ const resultFiles: string[] = [];
 const allResults: EvaluationResult[] = [];
 
 for (let repeat = 1; repeat <= repeatCount; repeat += 1) {
-  const results = await runner.run(provider, tasks, new NativeProcessRunner());
+  const results = await runner.run(provider, tasks, new NativeProcessRunner(), { graderRunner: new NativeProcessRunner() });
   const summary = report(results);
   reports.push(summary);
   allResults.push(...results);

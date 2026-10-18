@@ -10,6 +10,11 @@ export function shellCommandOf(entry: string): string | undefined {
   return match?.[1]?.replace(/\\"/gu, '"').replace(/\\\\/gu, '\\');
 }
 
+/** Result lines that follow `call <tool> ...` entries whose arguments contain `argumentText`. */
+export function resultsAfterCalls(trace: string[], tool: string, argumentText: string): string[] {
+  return trace.flatMap((entry, index) => (entry.startsWith(`call ${tool} `) && entry.includes(argumentText) ? [trace[index + 1] ?? ''] : []));
+}
+
 export function isTestCommand(command: string): boolean {
   return TEST_COMMAND.test(command.trim());
 }

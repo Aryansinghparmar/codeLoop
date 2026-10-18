@@ -3,8 +3,13 @@ export interface BenchmarkTask {
   name: string;
   prompt: string;
   setup(root: string): Promise<void>;
-  assert(root: string): Promise<{ passed: boolean; details: string[] }>;
+  /** File-state checks after the agent finished. `trace` is the run's tool trace. */
+  assert(root: string, context: { trace: string[] }): Promise<{ passed: boolean; details: string[] }>;
   live: boolean;
+  /** The task's own test file, run by the grader with `bun test` after the agent finished. */
+  testFile?: string;
+  /** A grader-owned test written only after the agent finished, so the agent cannot see or edit it. */
+  graderTest?: string;
 }
 
 export interface EvaluationResult {

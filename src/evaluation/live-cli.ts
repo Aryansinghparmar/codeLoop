@@ -24,7 +24,7 @@ if (!process.env.OPENAI_API_KEY) {
 const provider = new OpenAiResponsesProvider(config);
 const requestedTasks = process.env.CODELOOP_LIVE_TASKS?.split(',').map((value) => value.trim()).filter(Boolean);
 const tasks = fixedTasks.filter((task) => task.live && (!requestedTasks?.length || requestedTasks.includes(task.id)));
-const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner());
+const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner(), { graderRunner: new NativeProcessRunner() });
 const summary = report(results);
 writeRawResults(join(root, 'evals', 'results', `live-${provider.name}.jsonl`), results);
 console.log(JSON.stringify({ provider: provider.name, summary, results }, null, 2));

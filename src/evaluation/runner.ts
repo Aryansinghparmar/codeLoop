@@ -10,6 +10,8 @@ import type { BenchmarkTask, EvaluationResult } from './types';
 import { calculateCost } from './metrics';
 import type { ProcessRunner } from '../infrastructure/process/process-runner';
 import { redactSecrets } from '../shared/redact';
+import { runGraderTests, type GraderTestResult } from './grader';
+import { agentRanTests } from './trace-analysis';
 
 const offlineProcessRunner = {
   async run(): Promise<{ stdout: string; stderr: string; exitCode: number; signal: null; timedOut: false; durationMs: number }> {
@@ -17,10 +19,19 @@ const offlineProcessRunner = {
   },
 };
 
+export interface EvaluationRunOptions {
+  /**
+   * Runs the grader's own `bun test` after each task. Live CLIs pass a
+   * NativeProcessRunner; the offline suite leaves it out, so its results say
+   * `testsExecuted: false` and are graded on file assertions only.
+   */
+  graderRunner?: ProcessRunner;
+}
+
 export class EvaluationRunner {
   public constructor(private readonly baseConfig: CodeLoopConfig) {}
 
-  public async run(provider: LlmProvider, tasks: BenchmarkTask[] = fixedTasks, processRunner: ProcessRunner = offlineProcessRunner): Promise<EvaluationResult[]> {
+  public async run(provider: LlmProvider, tasks: BenchmarkTask[] = fixedTasks, processRunner: ProcessRunner = offlineProcessRunner, options: EvaluationRunOptions = {}): Promise<EvaluationResult[]> {
     const results: EvaluationResult[] = [];
     let suiteCostUsd = 0;
     for (const task of tasks) {
@@ -45,10 +56,11 @@ export class EvaluationRunner {
           onToolCall: (call) => trace.push(`call ${call.name} ${redactSecrets(JSON.stringify(call.arguments)).slice(0, 300)}`),
           onToolResult: (call, result) => trace.push(`${result.ok ? 'ok' : 'fail'} ${call.name}: ${redactSecrets(result.content).slice(0, 240)}`),
         });
-        const assertions = await task.assert(root);
+        const assertions = await task.assert(root, { trace });
+        const tests = await runGraderTests(task, root, options.graderRunner);
         const cost = calculateCost(run.provider, run.model, { inputTokens: run.usage.inputTokens, outputTokens: run.usage.outputTokens, totalTokens: run.usage.totalTokens });
         if (cost.costUsd !== undefined) suiteCostUsd += cost.costUsd;
-        results.push(toResult(task, run, assertions, cost.costUsd, trace));
+        results.push(toResult(task, run, assertions, tests, cost.costUsd, trace));
       } catch (error) {
         const failed = toFailedResult(task, provider, error, trace);
         if (failed.estimatedCostUsd !== undefined) suiteCostUsd += failed.estimatedCostUsd;
@@ -74,6 +86,8 @@ export function toSkippedResult(task: BenchmarkTask, provider: LlmProvider): Eva
     valid: false,
     ...emptyUsage(),
     assertionDetails: [],
+    testsExecuted: false,
+    agentRanTests: false,
     toolTrace: [],
     error: 'Task skipped because the live suite budget was reached.',
   };
@@ -83,14 +97,17 @@ export function toResult(
   task: BenchmarkTask,
   run: AgentRunResult,
   assertions: { passed: boolean; details: string[] },
+  tests: GraderTestResult,
   costUsd: number | undefined,
   trace: string[],
 ): EvaluationResult {
+  // A task passes only if the file assertions pass and, when the grader ran the tests, they pass too.
+  const passed = assertions.passed && (!tests.testsExecuted || tests.testsPassed === true);
   return {
     taskId: task.id,
     provider: run.provider,
     model: run.model,
-    passed: assertions.passed,
+    passed,
     valid: true,
     durationMs: run.durationMs,
     steps: run.steps,
@@ -102,7 +119,11 @@ export function toResult(
     outputTokens: run.usage.outputTokens,
     totalTokens: run.usage.totalTokens,
     ...(costUsd !== undefined ? { estimatedCostUsd: costUsd } : {}),
-    assertionDetails: assertions.details,
+    assertionDetails: [...assertions.details, ...tests.details],
+    assertionsPassed: assertions.passed,
+    testsExecuted: tests.testsExecuted,
+    ...(tests.testsPassed !== undefined ? { testsPassed: tests.testsPassed } : {}),
+    agentRanTests: agentRanTests(trace),
     toolTrace: trace,
   };
 }
@@ -127,6 +148,8 @@ export function toFailedResult(task: BenchmarkTask, provider: LlmProvider, error
     totalTokens: numeric(details.totalTokens),
     ...(typeof details.estimatedCostUsd === 'number' ? { estimatedCostUsd: details.estimatedCostUsd } : {}),
     assertionDetails: [],
+    testsExecuted: false,
+    agentRanTests: agentRanTests(trace),
     toolTrace: trace,
     error: error instanceof Error ? error.message : String(error),
   };
