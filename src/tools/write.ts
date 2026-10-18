@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { authorize, stringArg, textArg, type Tool } from './tool';
 
@@ -19,8 +19,19 @@ export const writeTool: Tool = {
     const path = context.pathGuard.resolveInside(input);
     const blocked = await authorize(context, { action: 'write', target: path, detail: `write ${content.length} characters` });
     if (blocked) return blocked;
+
+    const previous = existsSync(path) ? statSync(path) : undefined;
+    if (previous && !previous.isFile()) return { ok: false, content: `Write failed: ${input} exists and is not a regular file.` };
+
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content, 'utf8');
-    return { ok: true, content: JSON.stringify({ path: input, bytes: Buffer.byteLength(content, 'utf8'), created: true }) };
+    const summary = {
+      path: input,
+      bytes: Buffer.byteLength(content, 'utf8'),
+      created: previous === undefined,
+      overwritten: previous !== undefined,
+      previousBytes: previous?.size ?? 0,
+    };
+    return { ok: true, content: JSON.stringify(summary) };
   },
 };
