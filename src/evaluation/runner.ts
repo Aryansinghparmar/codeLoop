@@ -6,7 +6,7 @@ import { AgentLoop, type AgentRunResult } from '../agent/agent-loop';
 import type { LlmProvider } from '../llm/provider';
 import { createBuiltinRegistry } from '../tools/builtins';
 import { fixedTasks } from './fixed-tasks';
-import type { BenchmarkTask, EvaluationResult } from './types';
+import type { BenchmarkTask, EvalSuite, EvaluationResult } from './types';
 import { calculateCost } from './metrics';
 import type { ProcessRunner } from '../infrastructure/process/process-runner';
 import { redactSecrets } from '../shared/redact';
@@ -27,6 +27,8 @@ export interface EvaluationRunOptions {
    * `testsExecuted: false` and are graded on file assertions only.
    */
   graderRunner?: ProcessRunner;
+  /** Written into every result row, so stored JSONL says which suite it came from. */
+  suite?: EvalSuite;
 }
 
 export class EvaluationRunner {
@@ -70,7 +72,8 @@ export class EvaluationRunner {
         await rm(root, { recursive: true, force: true });
       }
     }
-    return results;
+    const suite = options.suite;
+    return suite ? results.map((result) => ({ suite, ...result })) : results;
   }
 }
 

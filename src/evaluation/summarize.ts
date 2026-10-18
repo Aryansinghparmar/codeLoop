@@ -1,6 +1,6 @@
 import { report, type EvaluationReport } from './report-generator';
 import { agentAttemptedTests, agentRanTests, countRejectedShellCalls } from './trace-analysis';
-import type { EvaluationResult } from './types';
+import type { EvalSuite, EvaluationResult } from './types';
 
 /**
  * How the pooled latency numbers are computed. `median()` returns the midpoint
@@ -80,11 +80,12 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
  * old `reports`/`aggregate` keys and records how the numbers were computed,
  * so nobody has to patch it by hand afterwards.
  */
-export function buildRepeatedSummary(input: { provider: string; model: string; startedAt: string; taskCount: number; resultFiles: string[]; runs: RunInput[] }) {
+export function buildRepeatedSummary(input: { provider: string; model: string; suite: EvalSuite; startedAt: string; taskCount: number; resultFiles: string[]; runs: RunInput[] }) {
   const summary = summarize(input.runs);
   return {
     provider: input.provider,
     model: input.model,
+    suite: input.suite,
     reportedModels: [...new Set(input.runs.flatMap((run) => run.results.map((result) => result.model)))],
     startedAt: input.startedAt,
     repeatCount: input.runs.length,

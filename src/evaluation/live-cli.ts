@@ -3,8 +3,9 @@ import { createConfig } from '../config/config';
 import { loadEnvironment } from '../config/env';
 import { OpenAiResponsesProvider } from '../llm/openai/responses-provider';
 import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
-import { fixedTasks } from './fixed-tasks';
+import { liveTasksFor, parseSuite, parseTaskIds } from './suites';
 import { EvaluationRunner } from './runner';
+import type { BenchmarkTask, EvalSuite } from './types';
 import { report } from './report-generator';
 import { createRunDirectory, relativePath, writeRawResults } from './result-writer';
 
@@ -15,6 +16,17 @@ if (process.env.CODELOOP_LIVE_CONFIRM !== 'yes') {
   process.exit(2);
 }
 
+// CODELOOP_EVAL_SUITE=v2 runs the v2 tasks; unset keeps v1, so the cv-baseline reproduces unchanged.
+let suite: EvalSuite;
+let tasks: BenchmarkTask[];
+try {
+  suite = parseSuite(process.env.CODELOOP_EVAL_SUITE);
+  tasks = liveTasksFor(suite, parseTaskIds(process.env.CODELOOP_LIVE_TASKS));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
+
 const config = createConfig(root);
 if (!process.env.OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is not set.');
@@ -22,12 +34,10 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const provider = new OpenAiResponsesProvider(config);
-const requestedTasks = process.env.CODELOOP_LIVE_TASKS?.split(',').map((value) => value.trim()).filter(Boolean);
-const tasks = fixedTasks.filter((task) => task.live && (!requestedTasks?.length || requestedTasks.includes(task.id)));
 // A new timestamped folder per run (created before spending anything), so earlier results are never overwritten.
 const runDirectory = createRunDirectory(root);
-const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner(), { graderRunner: new NativeProcessRunner() });
+const results = await new EvaluationRunner(config).run(provider, tasks, new NativeProcessRunner(), { graderRunner: new NativeProcessRunner(), suite });
 const summary = report(results);
 const resultPath = join(runDirectory, `live-${provider.name}.jsonl`);
 writeRawResults(resultPath, results);
-console.log(JSON.stringify({ provider: provider.name, model: provider.model, summary, resultFile: relativePath(root, resultPath), results }, null, 2));
+console.log(JSON.stringify({ provider: provider.name, model: provider.model, suite, summary, resultFile: relativePath(root, resultPath), results }, null, 2));
