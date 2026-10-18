@@ -13,8 +13,9 @@ PREP_PROMPT*.md
 # Interview preparation notes (private)
 preparation/
 
-# Evaluation results (local test data)
-evals/
+# Evaluation results: local runs stay private; scrubbed copies in evals/published/ are public
+evals/*
+!evals/published/
 
 # Temporary / scratch files
 tmp/

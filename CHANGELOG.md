@@ -12,6 +12,7 @@ I audited every claim the project makes against the code and the stored eval tra
 - **The eval approver rejected every confirm-tier request** (54 rejections in the traces). It now approves exactly `bun test` with relative test paths and nothing else.
 - **A new paid run would have overwritten the baseline files.** Runs now go into new timestamped folders with relative paths, the real model name and the stat method.
 - **Brittle tasks.** T3 failed a correct fix written as `i+1`, and T5/T6 passed even if the agent did nothing. T3 now relies on its test, and T5/T6 check that the trace shows the denial and recovery.
+- **`successRate` left out runs that aborted.** It divided passes by valid runs only, so 29/30 showed as 100%. Found while summarising the first test-graded live run. Invalid runs now count as failures. The `cv-baseline` data had no invalid runs, so its 30/30 is unchanged.
 - `eval:context` now prints only, and writes JSON only with `--out`.
 
 ### Safety (PathGuard and permissions)
