@@ -20,7 +20,8 @@ export function report(results: EvaluationResult[]): EvaluationReport {
     taskCount: results.length,
     validCount: valid.length,
     passedCount: valid.filter((result) => result.passed).length,
-    successRate: valid.length ? valid.filter((result) => result.passed).length / valid.length : 0,
+    // Invalid runs (the loop threw) count as failures; latency and steps describe valid runs only.
+    successRate: results.length ? valid.filter((result) => result.passed).length / results.length : 0,
     medianLatencyMs: median(valid.map((result) => result.durationMs)),
     p95LatencyMs: percentile(valid.map((result) => result.durationMs), 95),
     medianSteps: median(valid.map((result) => result.steps)),
