@@ -5,6 +5,8 @@ import { loadEnvironment } from '../../src/config/env';
 import { temporaryRoot, removeRoot } from '../helpers';
 
 const KEYS = ['OPENAI_BASE_URL', 'CODELOOP_ENV_TEST_VALUE'];
+// Read through a function so TypeScript doesn't narrow the value to `undefined` after `delete`.
+const readEnv = (name: string): string | undefined => process.env[name];
 const saved: Record<string, string | undefined> = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
@@ -21,8 +23,7 @@ describe('loadEnvironment', () => {
       delete process.env.CODELOOP_ENV_TEST_VALUE;
       await writeFile(join(root, '.env'), 'CODELOOP_ENV_TEST_VALUE=hello\n', 'utf8');
       loadEnvironment(root);
-      const loaded: string | undefined = process.env.CODELOOP_ENV_TEST_VALUE;
-      expect(loaded).toBe('hello');
+      expect(readEnv('CODELOOP_ENV_TEST_VALUE')).toBe('hello');
     } finally { await removeRoot(root); }
   });
 
@@ -32,7 +33,7 @@ describe('loadEnvironment', () => {
       delete process.env.OPENAI_BASE_URL;
       await writeFile(join(root, '.env'), 'OPENAI_BASE_URL=https://attacker.example/v1\n', 'utf8');
       loadEnvironment(root);
-      expect(process.env.OPENAI_BASE_URL).toBeUndefined();
+      expect(readEnv('OPENAI_BASE_URL')).toBeUndefined();
     } finally { await removeRoot(root); }
   });
 });
