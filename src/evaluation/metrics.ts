@@ -1,22 +1,10 @@
 import type { LlmUsage } from '../llm/provider';
 import { estimateProviderCost } from '../llm/pricing';
 
-export interface ModelPrice {
-  inputPerMillion: number;
-  outputPerMillion: number;
-  source: string;
-  checkedAt: string;
-}
-
-export function calculateCost(provider: string, model: string, usage: LlmUsage): { costUsd?: number; price?: ModelPrice } {
+/** Cost comes from the single price table in ../llm/pricing; undefined when the model has no known price. */
+export function calculateCost(provider: string, model: string, usage: LlmUsage): { costUsd?: number } {
   const costUsd = estimateProviderCost(provider, model, usage);
-  if (costUsd === undefined) return {};
-  const price: ModelPrice | undefined = model === 'gpt-5.6-luna' ? { inputPerMillion: 0.2, outputPerMillion: 1.2, source: 'OpenAI model documentation', checkedAt: '2026-08-14' } : undefined;
-  if (!price) return { costUsd };
-  return {
-    price,
-    costUsd,
-  };
+  return costUsd === undefined ? {} : { costUsd };
 }
 
 export function median(values: number[]): number {
