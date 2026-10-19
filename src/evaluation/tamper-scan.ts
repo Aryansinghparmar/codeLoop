@@ -22,7 +22,10 @@ const RULES: readonly TamperRule[] = [
   { label: 'starts other processes or workers', pattern: /child_process|\bBun\s*\.\s*(?:spawn|spawnSync|\$)|worker_threads|\bnew\s+Worker\b/u },
   { label: 'decodes hidden text', pattern: /fromCharCode|\batob\s*\(|['"`]base64['"`]/u },
   { label: 'changes globals or prototypes', pattern: /\bglobalThis\b|\.prototype\s*\.\s*\w+\s*=|\bdefineProperty\b/u },
-  { label: 'imports bun:test from source code', pattern: /bun:test/u, only: /^src\//u },
+  // Test files (`*.test.ts`, `*.spec.ts`) may import bun:test; that is what tests do. A non-test module that
+  // imports it is how a source file patches matchers the hidden test relies on. Matcher patching itself is
+  // caught in every file by the 'extends or replaces test matchers' rule above.
+  { label: 'imports bun:test from source code', pattern: /bun:test/u, only: /^src\/(?!.*\.(?:test|spec)\.[cm]?[jt]sx?$)/u },
 ];
 
 /** Config files that change how bun resolves, preloads or loads code. They must not appear unless the task set them up. */
