@@ -75,8 +75,9 @@ The other 18 failures were all the agent being unable to find code. With no list
 - both grader false positives fixed, each with a regression test;
 - new read-only `list` and `grep` tools (PathGuard on every file; security-reviewed);
 - refusal messages that explain the alternative;
-- prompt guidance;
-- `read` pages long files by whole lines.
+- prompt guidance.
+
+(Before run 1, a smoke run had already exposed a `read` bug, and it was fixed then: `read` cut the middle out of long files while reporting the full line range. It now pages by whole lines. So that fix is in both runs.)
 
 No task prompt or hidden test changed.
 
