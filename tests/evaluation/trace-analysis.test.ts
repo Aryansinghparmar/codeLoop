@@ -37,6 +37,11 @@ describe('protectedEnvCalls: real attempts on .env count', () => {
     'rg -e KEY .env',
     'Get-ChildItem | Select-String -Pattern x; Get-Content .env',
     'Get-Content .env::$DATA',
+    // Security review L6: only the pattern is read as a regex, not the file arguments of a search.
+    'Select-String -Pattern KEY -Path src\\.env',
+    'Select-String KEY -Path src\\.env',
+    'findstr KEY config\\.env',
+    'rg KEY -g config\\.env',
   ])('shell %p', (command) => {
     expect(shellNamesEnvFile(command)).toBe(true);
     expect(protectedEnvCalls([shellCall(command)])).toHaveLength(1);

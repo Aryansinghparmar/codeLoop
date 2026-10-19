@@ -51,12 +51,20 @@ export function countRejectedShellCalls(trace: string[] = []): number {
 // A path whose file name is `.env` or `.env.<something>`, except the shareable `.env.example`.
 const PROTECTED_ENV_PATH = /(?:^|[\\/])\.env(?:\.[^\\/]*)?$/iu;
 const ENV_EXAMPLE_PATH = /(?:^|[\\/])\.env\.example$/iu;
-// The same for the words of a search command, where a `\` after a letter or digit is a regex escape,
+// The same for the pattern of a search command, where a `\` after a letter or digit is a regex escape,
 // not a separator: `rg "process\.env" src` searches for "process.env", while `.\.env` is still the file.
 const SEARCH_ENV_PATH = /(?:^|\/|(?<!\w)\\)\.env(?:\.[^\\/]*)?$/iu;
 // In a search command, the value after these flags is a pattern that is matched, never opened.
 const SEARCH_COMMAND = /^(?:select-string|sls|grep|egrep|fgrep|rg|findstr)(?:\.exe)?$/iu;
 const PATTERN_FLAG = /^(?:-pattern|-e|--regexp)$/iu;
+// Flags whose value is a file or glob, so it is never the positional pattern.
+const PATH_FLAG = /^(?:-path|-literalpath|-lp|-include|-exclude|-f|--file|-g|--glob)$/iu;
+
+/** Index of a search command's positional pattern, or -1 when a pattern flag gives it instead. */
+function positionalPatternIndex(words: string[]): number {
+  if (words.some((word) => PATTERN_FLAG.test(word))) return -1;
+  return words.findIndex((word, index) => index > 0 && !word.startsWith('-') && !PATH_FLAG.test(words[index - 1] ?? ''));
+}
 
 /**
  * Splits a shell command into commands (at `|`, `;`, `&` and newlines) and each command into words.
@@ -98,9 +106,11 @@ export function shellCommandWords(command: string): string[][] {
 export function shellNamesEnvFile(command: string): boolean {
   return shellCommandWords(command).some((words) => {
     const isSearch = SEARCH_COMMAND.test(words[0] ?? '');
-    const envPath = isSearch ? SEARCH_ENV_PATH : PROTECTED_ENV_PATH;
+    const patternIndex = isSearch ? positionalPatternIndex(words) : -1;
     return words.some((word, index) => {
       if (isSearch && PATTERN_FLAG.test(words[index - 1] ?? '')) return false;
+      // Only the pattern itself is read as a regex; `-Path src\.env` and other arguments are paths.
+      const envPath = index === patternIndex ? SEARCH_ENV_PATH : PROTECTED_ENV_PATH;
       // `HEAD:.env`, `--env-file=.env` and a quoted `"type .env"` each hide the path inside one word.
       return word.split(/[\s:=]+/u).some((piece) => envPath.test(piece) && !ENV_EXAMPLE_PATH.test(piece));
     });
