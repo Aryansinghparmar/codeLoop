@@ -30,7 +30,7 @@ An independent review attacked the new tools from a detached worktree using dumm
 - Small output fixes: the snippet now starts just before the match (L2), and a search where every file was skipped says so instead of "No matches." (L3).
 - Not fixed: L4 (an ACL-denied entry is labelled "protected" instead of "unreadable") and L5 (a file swapped for a link between the check and the open). L5 needs an approved command or a concurrent process to exploit; the fix would read through a verified file descriptor.
 
-Not measured yet: no live run has been made with these changes. The offline `bun run eval` (scripted provider, which never calls the new tools) still passes 12/12, and `cv-baseline` still summarises to 30/30, 11473/15227 ms, lower bound 0.9050.
+Measured in v2 run 2 on the same tasks: 56/57 (see the result above). The offline `bun run eval` (scripted provider, which never calls the new tools) still passes 12/12, and `cv-baseline` still summarises to 30/30, 11473/15227 ms, lower bound 0.9050.
 
 ## [Unreleased] — hardening pass after a self-audit
 

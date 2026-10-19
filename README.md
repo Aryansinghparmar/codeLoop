@@ -119,10 +119,10 @@ What it does:
 What it is not: **a sandbox.** Shell classification is regex-based and can be evaded. Code you approve runs with your user's permissions. Allow-tier `git` commands honour the repository's own git config. Token counts in compaction are `chars/4` estimates. For untrusted repositories, run it in a container or VM. A project's `.env` is read only for `CODELOOP_*`, `OPENAI_API_KEY` and `OPENAI_MODEL`. Anything else (`OPENAI_BASE_URL`, proxies, TLS settings) must be set in your shell.
 
 ## Limitations and next steps
-- The read-only `list` and `grep` tools were added after the first v2 campaign, where 12 of its 33 failures came from not being able to list or search (see `CHANGELOG.md`). Their effect has not been measured with a new live run yet. In the earlier test-graded run, the slowest runs (a rename task, up to 77 s) were spent guessing file paths; its P95 sample is a run with no failed calls, so it reflects provider latency. `grep` runs the model's regex in-process, and JavaScript cannot interrupt a running regex. A 5 s deadline between lines and a 1000-character line cap give a soft bound (about the deadline plus one line); a hard bound would need a subprocess.
+- The read-only `list` and `grep` tools were added after the first v2 campaign, where 12 of its 33 failures came from not being able to list or search (see `CHANGELOG.md`). Their effect was measured in v2 run 2 on the same tasks: 56/57, with 0 shell refusals (106 before). In the earlier test-graded v1 run, the slowest runs (a rename task, up to 77 s) were spent guessing file paths; its P95 sample is a run with no failed calls, so it reflects provider latency. `grep` runs the model's regex in-process, and JavaScript cannot interrupt a running regex. A 5 s deadline between lines and a 1000-character line cap give a soft bound (about the deadline plus one line); a hard bound would need a subprocess.
 - Loop detection only catches identical repeated *failures*, not cycles of successful calls.
 - No streaming output. Compaction does not summarise with an LLM.
-- The eval tasks are small and correlated. A larger multi-file task set with pass@k is the next step for measurement.
+- The eval tasks are synthetic and correlated: v1 has 10 small tasks; v2 adds 19 harder tasks with hidden tests and pass@k. A held-out task set, and real repositories, are the next step for measurement.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed since `cv-baseline`, why, and how each problem was found.
 
