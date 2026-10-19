@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createConfig } from '../../src/config/config';
 import { PermissionPolicy } from '../../src/permissions/permission-policy';
 import { PathGuard } from '../../src/permissions/path-guard';
 import { createBuiltinRegistry } from '../../src/tools/builtins';
-import { grepTool, MAX_GREP_RESULTS } from '../../src/tools/grep';
+import { v2TaskSpecs } from '../../src/evaluation/tasks-v2';
+import { GREP_TIME_LIMIT_MS, grepTool, MAX_GREP_ENTRIES, MAX_GREP_RESULTS, MAX_SCAN_CHARS } from '../../src/tools/grep';
 import { MAX_READ_BYTES } from '../../src/tools/read';
 import type { ToolExecutionContext, ToolResult } from '../../src/tools/tool';
 import { temporaryRoot, removeRoot } from '../helpers';
@@ -136,6 +137,48 @@ describe('grep tool', () => {
     expect(long.length).toBeLessThan(260);
     expect(long.endsWith('...')).toBe(true);
   });
+
+  // Security review H1: a model-written regex runs on this thread and nothing can interrupt it.
+  // Before the fix (a) ran for more than 120 s and (b) took 33 s. The thresholds leave room for slow CI.
+  describe('bounded time for catastrophic patterns', () => {
+    test('(a) nested quantifiers over the V13 fixtures stop at the deadline', async () => {
+      const spec = v2TaskSpecs.find((task) => task.id === 'V13');
+      for (const [file, content] of Object.entries(spec?.fixtures ?? {})) {
+        mkdirSync(dirname(join(root, file)), { recursive: true });
+        writeFileSync(join(root, file), content);
+      }
+      const started = performance.now();
+      const result = body(await grepTool.execute({ pattern: '(\\w+\\s?)+$' }, context));
+      expect(performance.now() - started).toBeLessThan(GREP_TIME_LIMIT_MS + 10_000);
+      expect(result.truncated).toBe(true);
+      expect(result.note).toContain('literal: true');
+    }, 60_000);
+
+    test('(b) several .* on a 200 KB minified line only test the first 1000 characters', async () => {
+      mkdirSync(join(root, 'public'));
+      writeFileSync(join(root, 'public', 'app.min.js'), `${'function f(x){return x+1};'.repeat(8_000)}\n`);
+      const started = performance.now();
+      const result = body(await grepTool.execute({ pattern: 'function.*return.*await' }, context));
+      expect(performance.now() - started).toBeLessThan(GREP_TIME_LIMIT_MS);
+      expect(result.matches).toEqual([]);
+    }, 60_000);
+
+    test('a match past column 1000 is not found (documented trade-off)', async () => {
+      writeFileSync(join(root, 'src', 'wide.ts'), `${'x'.repeat(MAX_SCAN_CHARS)}FAR\n${'x'.repeat(10)}NEAR\n`);
+      expect(body(await grepTool.execute({ pattern: 'FAR|NEAR' }, context)).matches).toHaveLength(1);
+    });
+  });
+
+  test('stops walking a huge tree and reports truncated', async () => {
+    for (let index = 0; index <= MAX_GREP_ENTRIES / 1000; index += 1) {
+      const directory = join(root, 'src', `d${index}`);
+      mkdirSync(directory);
+      for (let file = 0; file < 1000; file += 1) mkdirSync(join(directory, `e${file}`));
+    }
+    const result = body(await grepTool.execute({ pattern: 'NEEDLE' }, context));
+    expect(result.truncated).toBe(true);
+    expect(result.note).toContain('directory entries');
+  }, 120_000);
 
   test('output goes through the registry redaction', async () => {
     writeFileSync(join(root, 'src', 'key.ts'), "const key = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789';\n");

@@ -6,8 +6,30 @@ import { readDirectory } from './walk';
 
 export const MAX_GREP_RESULTS = 100;
 export const MAX_GREP_FILES = 1000;
+/** Directory entries the walk may visit, so a huge tree (20k empty folders took 6 s) cannot stall a call. */
+export const MAX_GREP_ENTRIES = 20_000;
+/** File bytes one call may read (300 non-matching 2 MB files took 6 s). */
+export const MAX_GREP_BYTES = 64 * 1024 * 1024;
+/**
+ * The regex comes from the model and runs on this thread, where nothing can interrupt it:
+ * `(\w+\s?)+$` on a v2 fixture ran for over 120 s, and `function.*return.*await` on one 50 KB
+ * minified line took 33 s. So only the first MAX_SCAN_CHARS of each line are tested (a match
+ * further right is missed), and the scan stops at a deadline checked before every line and file.
+ * The bound is soft: the deadline plus one capped line, about 1 s for nested quantifiers.
+ */
+export const MAX_SCAN_CHARS = 1_000;
+export const GREP_TIME_LIMIT_MS = 5_000;
 const DEFAULT_GREP_RESULTS = 50;
 const MAX_LINE_CHARS = 200;
+
+type StopReason = 'time' | 'files' | 'entries' | 'bytes';
+
+const STOP_NOTES: Record<StopReason, string> = {
+  time: `Stopped after ${GREP_TIME_LIMIT_MS / 1000} s: the pattern is too slow (nested quantifiers or several .*). Narrow the path, use a simpler pattern, or set literal: true.`,
+  files: `Searched only the first ${MAX_GREP_FILES} files. Use a narrower path.`,
+  entries: `Stopped after visiting ${MAX_GREP_ENTRIES} directory entries. Use a narrower path.`,
+  bytes: `Stopped after reading ${MAX_GREP_BYTES / 1024 / 1024} MB. Use a narrower path.`,
+};
 
 interface Candidate {
   relativePath: string;
@@ -35,23 +57,28 @@ function openable(context: ToolExecutionContext, path: string): string | undefin
   }
 }
 
-/** Files under `directory`, breadth-first, without entering protected, skipped or linked entries. Stops past `max`. */
-function collectFiles(context: ToolExecutionContext, directory: string, max: number): Candidate[] {
+/** Files under `directory`, breadth-first, without entering protected, skipped or linked entries. */
+function collectFiles(context: ToolExecutionContext, directory: string, deadline: number): { files: Candidate[]; stop?: StopReason } {
   const files: Candidate[] = [];
   const queue = [directory];
-  for (let index = 0; index < queue.length && files.length <= max; index += 1) {
+  let visited = 0;
+  for (let index = 0; index < queue.length; index += 1) {
+    if (performance.now() > deadline) return { files, stop: 'time' };
     for (const entry of readDirectory(context.pathGuard, queue[index] ?? directory)) {
+      visited += 1;
+      if (visited > MAX_GREP_ENTRIES) return { files, stop: 'entries' };
       if (entry.kind === 'directory' && entry.path) queue.push(entry.path);
       if (entry.kind === 'file' && entry.path) files.push({ relativePath: entry.relativePath, path: entry.path });
+      if (files.length > MAX_GREP_FILES) return { files: files.slice(0, MAX_GREP_FILES), stop: 'files' };
     }
   }
-  return files;
+  return { files };
 }
 
 export const grepTool: Tool = {
   definition: {
     name: 'grep',
-    description: 'Search file contents in the project for a regular expression (JavaScript syntax; set literal for plain text). Returns path:line: text for each matching line. path may be a directory (default: the project root) or one file.',
+    description: 'Search file contents in the project for a regular expression (JavaScript syntax; set literal for plain text). Returns path:line: text for each matching line. path may be a directory (default: the project root) or one file. Only the first 1000 characters of each line are searched.',
     parameters: {
       type: 'object',
       properties: {
@@ -82,16 +109,22 @@ export const grepTool: Tool = {
     const blocked = await authorize(context, { action: 'read', target: start });
     if (blocked) return blocked;
     if (!existsSync(start)) return failure(`${input} does not exist.`);
-    const files = statSync(start).isDirectory()
-      ? collectFiles(context, start, MAX_GREP_FILES)
-      : [{ relativePath: relative(context.pathGuard.projectRoot, start).replaceAll('\\', '/'), path: start }];
+    const deadline = performance.now() + GREP_TIME_LIMIT_MS;
+    const walk = statSync(start).isDirectory()
+      ? collectFiles(context, start, deadline)
+      : { files: [{ relativePath: relative(context.pathGuard.projectRoot, start).replaceAll('\\', '/'), path: start }] };
+    let stop: StopReason | undefined = walk.stop;
 
     const matches: string[] = [];
     let filesScanned = 0;
     let filesSkipped = 0;
+    let bytesRead = 0;
     // Collect one match past the limit, so `truncated` is only true when more matches really exist.
-    for (const file of files.slice(0, MAX_GREP_FILES)) {
-      if (matches.length > limit) break;
+    for (const file of walk.files) {
+      if (matches.length > limit || stop === 'time') break;
+      if (performance.now() > deadline) stop = 'time';
+      else if (bytesRead > MAX_GREP_BYTES) stop = 'bytes';
+      if (stop === 'time' || stop === 'bytes') break;
       const path = openable(context, file.path);
       const stat = path ? statSync(path) : undefined;
       if (!path || !stat?.isFile() || stat.size > MAX_READ_BYTES) {
@@ -99,6 +132,7 @@ export const grepTool: Tool = {
         continue;
       }
       const bytes = readFileSync(path);
+      bytesRead += bytes.length;
       if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
         filesSkipped += 1;
         continue;
@@ -106,8 +140,12 @@ export const grepTool: Tool = {
       filesScanned += 1;
       const lines = bytes.toString('utf8').split(/\r?\n/u);
       for (let index = 0; index < lines.length && matches.length <= limit; index += 1) {
+        if (performance.now() > deadline) {
+          stop = 'time';
+          break;
+        }
         const line = lines[index] ?? '';
-        if (!regex.test(line)) continue;
+        if (!regex.test(line.slice(0, MAX_SCAN_CHARS))) continue;
         const text = line.trim();
         matches.push(`${file.relativePath}:${index + 1}: ${text.length > MAX_LINE_CHARS ? `${text.slice(0, MAX_LINE_CHARS)}...` : text}`);
       }
@@ -115,11 +153,10 @@ export const grepTool: Tool = {
 
     const hitMatchCap = matches.length > limit;
     if (hitMatchCap) matches.pop();
-    const hitFileCap = files.length > MAX_GREP_FILES;
-    const truncated = hitMatchCap || hitFileCap;
+    const truncated = hitMatchCap || stop !== undefined;
     const payload: Record<string, unknown> = { pattern, path: input, matches, filesScanned, filesSkipped, truncated };
-    if (hitMatchCap) payload.note = `Stopped at ${limit} matches. Use a more specific pattern or a narrower path to see the rest.`;
-    else if (hitFileCap) payload.note = `Searched only the first ${MAX_GREP_FILES} files. Use a narrower path.`;
+    if (stop) payload.note = STOP_NOTES[stop];
+    else if (hitMatchCap) payload.note = `Stopped at ${limit} matches. Use a more specific pattern or a narrower path to see the rest.`;
     else if (matches.length === 0) payload.note = 'No matches.';
     return { ok: true, content: JSON.stringify(payload), truncated };
   },
