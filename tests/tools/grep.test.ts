@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createConfig } from '../../src/config/config';
 import { PermissionPolicy } from '../../src/permissions/permission-policy';
@@ -8,7 +8,7 @@ import { PathGuard } from '../../src/permissions/path-guard';
 import { createBuiltinRegistry } from '../../src/tools/builtins';
 import { v2TaskSpecs } from '../../src/evaluation/tasks-v2';
 import { GREP_TIME_LIMIT_MS, grepTool, MAX_GREP_ENTRIES, MAX_GREP_RESULTS, MAX_SCAN_CHARS } from '../../src/tools/grep';
-import { MAX_READ_BYTES } from '../../src/tools/read';
+import { createReadTool, MAX_READ_BYTES } from '../../src/tools/read';
 import type { ToolExecutionContext, ToolResult } from '../../src/tools/tool';
 import { temporaryRoot, removeRoot } from '../helpers';
 
@@ -93,6 +93,24 @@ describe('grep tool', () => {
       reads.mockRestore();
       stats.mockRestore();
     }
+  });
+
+  // Security review M3: a hard link to .env has an innocent name. NTFS allows one without admin rights.
+  test('skips a hard link (it may be .env under another name), and read refuses it', async () => {
+    writeFileSync(join(root, '.env'), 'CANARYVAL_ENV=1\n');
+    linkSync(join(root, '.env'), join(root, 'src', 'notes.txt'));
+    const searched = body(await grepTool.execute({ pattern: 'CANARYVAL' }, context));
+    expect(searched.matches).toEqual([]);
+    expect(body(await grepTool.execute({ pattern: 'CANARYVAL', path: 'src/notes.txt' }, context)).matches).toEqual([]);
+    const read = await createReadTool(createConfig(root)).execute({ path: 'src/notes.txt' }, context);
+    expect(read.ok).toBe(false);
+    expect(read.content).toContain('hard links');
+    expect(read.content).not.toContain('CANARYVAL');
+    // Bun installs node_modules as hard links to its cache, so read still allows them there.
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(root, 'cache-copy.d.ts'), 'export declare const x: number;\n');
+    linkSync(join(root, 'cache-copy.d.ts'), join(root, 'node_modules', 'pkg', 'index.d.ts'));
+    expect((await createReadTool(createConfig(root)).execute({ path: 'node_modules/pkg/index.d.ts' }, context)).ok).toBe(true);
   });
 
   test('refuses a protected file or directory as the search path', async () => {

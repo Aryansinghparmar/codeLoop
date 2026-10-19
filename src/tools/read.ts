@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { relative } from 'node:path';
 import type { CodeLoopConfig } from '../config/config';
 import { truncateMiddle } from '../shared/text';
 import { authorize, stringArg, type Tool, type ToolResult } from './tool';
@@ -40,6 +41,12 @@ export function createReadTool(config: CodeLoopConfig): Tool {
       const stat = statSync(path);
       if (stat.isDirectory()) return failure(`${input} is a directory. Use the list tool to see what it contains.`);
       if (!stat.isFile()) return failure(`${input} is not a regular file.`);
+      // A hard link has no name of its own, so name-based rules cannot tell it is not `.env`. Bun installs
+      // node_modules as hard links to its global cache, so packages stay readable (planting a link there
+      // needs an approved command or an install script, which can already run any code).
+      if (stat.nlink > 1 && !relative(context.pathGuard.projectRoot, path).split(/[\\/]/u).includes('node_modules')) {
+        return failure(`${input} has ${stat.nlink} hard links, so it may be a protected file under another name.`);
+      }
       if (stat.size > MAX_READ_BYTES) {
         return failure(`${input} is ${stat.size} bytes, over the ${MAX_READ_BYTES}-byte read limit. Use the shell tool to inspect part of it.`);
       }

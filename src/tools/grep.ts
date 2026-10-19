@@ -67,7 +67,8 @@ function loadText(context: ToolExecutionContext, candidate: string): { text?: st
   if (!path) return { bytesRead: 0 };
   try {
     const stat = statSync(path);
-    if (!stat.isFile() || stat.size > MAX_READ_BYTES) return { bytesRead: 0 };
+    // nlink > 1: a hard link has no name of its own, so it may be `.env` under another name.
+    if (!stat.isFile() || stat.size > MAX_READ_BYTES || stat.nlink > 1) return { bytesRead: 0 };
     const bytes = readFileSync(path);
     if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { bytesRead: bytes.length };
     return { text: bytes.toString('utf8'), bytesRead: bytes.length };
