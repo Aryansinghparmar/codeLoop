@@ -54,14 +54,31 @@ export function createReadTool(config: CodeLoopConfig): Tool {
       const requestedEnd = typeof args.endLine === 'number' && args.endLine >= startLine ? Math.floor(args.endLine) : totalLines;
       const endLine = Math.min(requestedEnd, totalLines);
 
-      const selected = lines.slice(startLine - 1, endLine);
-      const numbered = selected.map((line, index) => `${String(startLine + index).padStart(5, ' ')}| ${line}`).join('\n');
-      const result = truncateMiddle(numbered, config.fileReadMaxChars);
+      // Return whole lines from startLine until the size cap, and say exactly where the file continues.
+      // (Cutting the middle out would hide lines while still reporting endLine = the last line.)
+      const shown: string[] = [];
+      let size = 0;
+      let lastShown = startLine - 1;
+      for (let lineNumber = startLine; lineNumber <= endLine; lineNumber += 1) {
+        const numberedLine = `${String(lineNumber).padStart(5, ' ')}| ${lines[lineNumber - 1] ?? ''}`;
+        if (shown.length > 0 && size + numberedLine.length + 1 > config.fileReadMaxChars) break;
+        shown.push(numberedLine);
+        size += numberedLine.length + 1;
+        lastShown = lineNumber;
+      }
+      // A single line longer than the cap is still shown, but cut (keeping its start and end).
+      const text = truncateMiddle(shown.join('\n'), config.fileReadMaxChars);
+      const truncated = lastShown < endLine || text.truncated;
+      const payload: Record<string, unknown> = { path: input, startLine, endLine: lastShown, totalLines, text: text.text, truncated };
+      if (lastShown < endLine) {
+        payload.nextStartLine = lastShown + 1;
+        payload.note = `Showing lines ${startLine}-${lastShown} of ${totalLines}. Call read again with startLine ${lastShown + 1} to continue.`;
+      }
       return {
         ok: true,
-        content: JSON.stringify({ path: input, startLine, endLine, totalLines, text: result.text, truncated: result.truncated }),
-        truncated: result.truncated,
-        metadata: { originalLength: result.originalLength },
+        content: JSON.stringify(payload),
+        truncated,
+        metadata: { originalLength: text.originalLength },
       };
     },
   };

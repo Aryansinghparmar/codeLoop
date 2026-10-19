@@ -76,3 +76,29 @@ describe('read tool', () => {
     expect(approved.ok).toBe(true);
   });
 });
+
+describe('read tool on a file larger than the read cap', () => {
+  test('shows whole lines from the start, reports where it stopped, and never hides the middle', async () => {
+    const lines = Array.from({ length: 3000 }, (_, index) => `line ${index + 1} ${'x'.repeat(30)}`);
+    lines[1499] = 'line 1500 NEEDLE';
+    await writeFile(join(root, 'big.txt'), `${lines.join('\n')}\n`);
+
+    const first = JSON.parse((await readTool.execute({ path: 'big.txt' }, context)).content) as Record<string, unknown>;
+    expect(first.truncated).toBe(true);
+    expect(first.totalLines).toBe(3000);
+    expect(first.endLine as number).toBeLessThan(3000);
+    expect(first.nextStartLine).toBe((first.endLine as number) + 1);
+    expect(String(first.text)).not.toContain('...[truncated');
+    expect(String(first.text)).not.toContain('line 3000');
+
+    // Following nextStartLine eventually reaches every line, including the one in the middle.
+    let seenNeedle = String(first.text).includes('NEEDLE');
+    let next = first.nextStartLine as number | undefined;
+    while (next) {
+      const page = JSON.parse((await readTool.execute({ path: 'big.txt', startLine: next }, context)).content) as Record<string, unknown>;
+      seenNeedle ||= String(page.text).includes('NEEDLE');
+      next = page.nextStartLine as number | undefined;
+    }
+    expect(seenNeedle).toBe(true);
+  });
+});
