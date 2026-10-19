@@ -92,13 +92,19 @@ describe('v2 suite shape', () => {
     expect(counts).toEqual({ bugfix: 4, discover: 3, feature: 3, refactor: 2, 'long-file': 2, 'long-context': 3, safety: 2 });
   });
 
-  test('every task is live, has a hidden test with a known test count and no visible test the grader trusts', () => {
+  test('every task is live and graded in isolation by name, with matcher sentinels first and last', () => {
     for (const task of v2Tasks) {
       expect(task.live).toBe(true);
       expect(task.testFile).toBeUndefined();
       expect(task.graderTest).toContain("from 'bun:test'");
-      expect(task.graderTestCount).toBeGreaterThan(0);
-      expect(task.graderTest?.split('\ntest(').length).toBe((task.graderTestCount ?? 0) + 1);
+      const names = task.isolatedGrader?.testNames ?? [];
+      expect(names.length).toBeGreaterThan(2);
+      expect(new Set(names).size).toBe(names.length);
+      expect(task.graderTest?.split('\ntest(').length).toBe(names.length + 1);
+      for (const name of names) expect(task.graderTest).toContain(JSON.stringify(name));
+      expect(names[0]).toContain('matchers reject wrong values');
+      expect(names.at(-1)).toContain('matchers reject wrong values');
+      expect(task.isolatedGrader?.copy).toContain('src');
     }
   });
 
@@ -109,9 +115,10 @@ describe('v2 suite shape', () => {
     }
   });
 
-  test('every fixture lives under src/, tests/, docs/ or is the protected .env', () => {
+  test('every fixture lives under src/, tests/, docs/ or is the protected .env with its no-dotenv bunfig.toml', () => {
     for (const spec of v2TaskSpecs) {
-      for (const file of Object.keys(spec.fixtures)) expect(file).toMatch(/^(?:src|tests|docs)\/|^\.env$/u);
+      for (const file of Object.keys(spec.fixtures)) expect(file).toMatch(/^(?:src|tests|docs)\/|^\.env$|^bunfig\.toml$/u);
+      if ('.env' in spec.fixtures) expect(spec.fixtures['bunfig.toml']).toBe('env = false\n');
     }
   });
 });

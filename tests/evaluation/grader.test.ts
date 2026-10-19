@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createConfig } from '../../src/config/config';
 import { EvaluationRunner } from '../../src/evaluation/runner';
 import { fixedTasks } from '../../src/evaluation/fixed-tasks';
-import { reportsExactPasses } from '../../src/evaluation/grader';
+import { judgeJUnit, parseJUnit, runGraderTests } from '../../src/evaluation/grader';
 import { NativeProcessRunner } from '../../src/infrastructure/process/native-process-runner';
 import type { LlmProvider, LlmToolCall } from '../../src/llm/provider';
 import { ScriptedProvider } from '../../src/llm/scripted-provider';
@@ -51,13 +51,45 @@ describe('test-executing grader', () => {
   });
 });
 
-describe('grader pass count', () => {
-  test('requires exactly the expected passes and no failures', () => {
-    const summary = 'tests/grader-check.test.ts:\n(pass) a\n(pass) b\n\n 2 pass\n 0 fail\nRan 2 tests across 1 file.';
-    expect(reportsExactPasses(summary, 2)).toBe(true);
-    expect(reportsExactPasses(summary, 3)).toBe(false);
-    expect(reportsExactPasses(' 2 pass\n 1 fail\n', 2)).toBe(false);
-    // A module that calls process.exit(0) leaves no summary at all.
-    expect(reportsExactPasses('bun test v1.3.10\n', 2)).toBe(false);
+describe('grader JUnit verdict', () => {
+  const report = (cases: string) => `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites><testsuite name="t">${cases}</testsuite></testsuites>`;
+  const pass = (name: string) => `<testcase name="${name}" classname="" time="0" />`;
+
+  test('reads names (with XML escapes) and failures', () => {
+    expect(parseJUnit(report(`${pass('grader: a &quot;b&quot; &lt;c&gt;')}<testcase name="grader: d"><failure type="AssertionError" /></testcase><testcase name="grader: e"><skipped /></testcase>`))).toEqual([
+      { name: 'grader: a "b" <c>', passed: true },
+      { name: 'grader: d', passed: false },
+      { name: 'grader: e', passed: false },
+    ]);
   });
+
+  test('requires exactly the expected names, each passed', () => {
+    expect(judgeJUnit(report(pass('grader: a') + pass('grader: b')), ['grader: a', 'grader: b']).ok).toBe(true);
+    expect(judgeJUnit(report(pass('grader: a')), ['grader: a', 'grader: b']).problem).toContain('missing');
+    expect(judgeJUnit(report(pass('grader: a') + pass('grader: b') + pass('extra')), ['grader: a', 'grader: b']).problem).toContain('unexpected');
+    expect(judgeJUnit(report(pass('grader: a') + pass('grader: a')), ['grader: a']).ok).toBe(false);
+    expect(judgeJUnit(report(`${pass('grader: a')}<testcase name="grader: b"><failure /></testcase>`), ['grader: a', 'grader: b']).problem).toContain('not passed');
+    // A module that calls process.exit(0) stops bun before it writes the report.
+    expect(judgeJUnit(undefined, ['grader: a']).problem).toContain('no JUnit report');
+  });
+});
+
+describe('grader robustness', () => {
+  test('a directory at the grader test path is replaced, not a crash', async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const root = mkdtempSync(join(tmpdir(), 'grader-dir-'));
+    try {
+      mkdirSync(join(root, 'tests', 'grader-check.test.ts'), { recursive: true });
+      writeFileSync(join(root, 'tests', 'grader-check.test.ts', 'keep.txt'), 'x');
+      const { testFile: _visibleTest, ...base } = countTask[0]!;
+      const task = { ...base, graderTest: "import { test, expect } from 'bun:test';\ntest('ok', () => expect(1).toBe(1));\n" };
+      const result = await runGraderTests(task, root, graderRunner);
+      expect(result.testsExecuted).toBe(true);
+      expect(result.testsPassed).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
