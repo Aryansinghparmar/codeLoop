@@ -4,7 +4,7 @@ import { truncateMiddle } from '../shared/text';
 import { authorize, stringArg, type Tool, type ToolResult } from './tool';
 
 export const MAX_READ_BYTES = 2 * 1024 * 1024;
-const BINARY_SNIFF_BYTES = 8 * 1024;
+export const BINARY_SNIFF_BYTES = 8 * 1024;
 
 function failure(message: string): ToolResult {
   return { ok: false, content: `Read failed: ${message}` };

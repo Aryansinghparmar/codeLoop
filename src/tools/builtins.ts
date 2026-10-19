@@ -3,6 +3,7 @@ import { PermissionPolicy } from '../permissions/permission-policy';
 import { PathGuard } from '../permissions/path-guard';
 import { createShellTool } from './shell';
 import { editTool } from './edit';
+import { grepTool } from './grep';
 import { listTool } from './list';
 import { createReadTool } from './read';
 import { ToolRegistry } from './registry';
@@ -18,6 +19,7 @@ export function createBuiltinRegistry(config: CodeLoopConfig, processRunner: Pro
   registry.register(writeTool);
   registry.register(editTool);
   registry.register(listTool);
+  registry.register(grepTool);
   registry.register(createShellTool(config, processRunner));
   return { registry, pathGuard, permissionPolicy };
 }
