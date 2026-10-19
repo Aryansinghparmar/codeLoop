@@ -1,7 +1,7 @@
 // Recomputes every evaluation number from stored JSONL results. It never calls
 // a provider and never writes to an input file.
 //
-// Usage: bun run eval:summarize [--dir evals/results] [--pattern live-openai-repeat-*.jsonl] [--out <file>] [--json]
+// Usage: bun run eval:summarize [--dir evals/results] [--pattern live-openai-repeat-*.jsonl] [--out <file>] [--json] [--allow-mixed-suites]
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { formatSummary, summarize, type RunInput } from './summarize';
@@ -23,6 +23,8 @@ if (outPath && files.some((file) => samePath(file, outPath))) fail(`Refusing to 
 
 const runs: RunInput[] = files.map((file) => ({ label: basename(file, '.jsonl'), results: readJsonl(file) }));
 const summary = summarize(runs);
+// v1 and v2 rows pooled together would give a meaningless pass rate.
+if (summary.suites.length > 1 && !args.allowMixedSuites) fail(`The input files mix suites (${summary.suites.join(', ')}). Summarise one suite at a time, or pass --allow-mixed-suites.`);
 const inputFiles = files.map((file) => relative(process.cwd(), file).replaceAll('\\', '/'));
 
 if (args.json) console.log(JSON.stringify({ inputFiles, ...summary }, null, 2));
@@ -42,18 +44,19 @@ function readJsonl(file: string): EvaluationResult[] {
     .map((line) => JSON.parse(line) as EvaluationResult);
 }
 
-function parseArgs(argv: string[]): { dir?: string; pattern?: string; out?: string; json?: boolean } {
-  const parsed: { dir?: string; pattern?: string; out?: string; json?: boolean } = {};
+function parseArgs(argv: string[]): { dir?: string; pattern?: string; out?: string; json?: boolean; allowMixedSuites?: boolean } {
+  const parsed: { dir?: string; pattern?: string; out?: string; json?: boolean; allowMixedSuites?: boolean } = {};
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === '--json') { parsed.json = true; continue; }
+    if (flag === '--allow-mixed-suites') { parsed.allowMixedSuites = true; continue; }
     const value = argv[index + 1];
     if ((flag === '--dir' || flag === '--pattern' || flag === '--out') && value) {
       parsed[flag.slice(2) as 'dir' | 'pattern' | 'out'] = value;
       index += 1;
       continue;
     }
-    fail(`Unknown or incomplete argument: ${flag}\nUsage: bun run eval:summarize [--dir evals/results] [--pattern live-openai-repeat-*.jsonl] [--out <file>] [--json]`);
+    fail(`Unknown or incomplete argument: ${flag}\nUsage: bun run eval:summarize [--dir evals/results] [--pattern live-openai-repeat-*.jsonl] [--out <file>] [--json] [--allow-mixed-suites]`);
   }
   return parsed;
 }

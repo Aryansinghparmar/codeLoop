@@ -1,6 +1,7 @@
 import { median } from './metrics';
 import { report, type EvaluationReport } from './report-generator';
 import { agentAttemptedTests, agentRanTests, countRejectedShellCalls } from './trace-analysis';
+import type { RunSettings } from './suites';
 import type { EvalSuite, EvaluationResult } from './types';
 
 /**
@@ -15,7 +16,28 @@ export interface RunInput {
   results: EvaluationResult[];
 }
 
-export type MatrixCell = 'pass' | 'fail' | 'invalid' | 'missing';
+export type MatrixCell = 'pass' | 'fail' | 'invalid' | 'skipped' | 'missing';
+
+/**
+ * A row's stop reason. Rows written before stop reasons existed have none:
+ * a budget skip is recognised by its message, and any other invalid row is
+ * labelled as such (it may have been an agent stop that was never graded).
+ */
+export function stopReasonOf(result: EvaluationResult): string {
+  if (result.stopReason) return result.stopReason;
+  if (result.error?.includes('suite budget was reached')) return 'suite-budget-skip';
+  return result.valid ? 'completed' : 'invalid (recorded before stop reasons)';
+}
+
+/** One task family across all runs. Compaction mostly happens in long tasks, so compare within a family. */
+export interface CategoryRow {
+  category: string;
+  runs: number;
+  passed: number;
+  passRate: number;
+  runsWithCompaction: number;
+  passedWithCompaction: number;
+}
 
 export interface TraceStats {
   runs: number;
@@ -45,6 +67,10 @@ export interface TaskRow {
   passRate: number;
   invalid: number;
   runsWithCompaction: number;
+  /** Runs never started because the suite budget ran out (counted as not passed). */
+  skipped: number;
+  /** Runs the agent loop stopped (step limit, repeated failure, task budget); they were still graded. */
+  agentStopped: number;
   medianSteps: number;
   meanCostUsd: number;
 }
@@ -78,6 +104,10 @@ export interface EvaluationSummary {
   statMethod: string;
   /** Suites found in the rows; rows written before v2 existed have no suite and are v1. */
   suites: string[];
+  /** Step limits recorded in the rows (absent in older rows). */
+  maxSteps: number[];
+  /** How many rows ended for each reason (see stopReasonOf). */
+  stopReasons: Record<string, number>;
   pooled: EvaluationReport & { latencyMinMs: number; latencyMaxMs: number; p95Rank: string };
   perRun: Array<{ label: string; report: EvaluationReport }>;
   passMatrix: { columns: string[]; rows: Record<string, MatrixCell[]> };
@@ -87,6 +117,7 @@ export interface EvaluationSummary {
   passRate: { passed: number; total: number; lowerBound95: number; method: string };
   passAtK: PassAtK;
   perTask: TaskRow[];
+  perCategory: CategoryRow[];
   compaction: CompactionStats;
 }
 
@@ -100,6 +131,8 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
   return {
     statMethod: STAT_METHOD,
     suites: [...new Set(all.map((result) => result.suite ?? 'v1'))],
+    maxSteps: [...new Set(all.flatMap((result) => (result.maxSteps === undefined ? [] : [result.maxSteps])))],
+    stopReasons: countBy(all.map(stopReasonOf)),
     pooled: {
       ...pooled,
       latencyMinMs: latencies[0] ?? 0,
@@ -120,7 +153,31 @@ export function summarize(runs: RunInput[]): EvaluationSummary {
     passAtK: passAtK(matrix),
     perTask: perTask(matrix, all),
     compaction: compactionStats(all),
+    perCategory: perCategory(all),
   };
+}
+
+function countBy(values: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return counts;
+}
+
+export function perCategory(results: EvaluationResult[]): CategoryRow[] {
+  const categories = [...new Set(results.flatMap((result) => (result.category ? [result.category] : [])))];
+  return categories.map((category) => {
+    const rows = results.filter((result) => result.category === category);
+    const passed = rows.filter((result) => result.valid && result.passed);
+    const compacted = rows.filter((result) => result.reductions > 0);
+    return {
+      category,
+      runs: rows.length,
+      passed: passed.length,
+      passRate: rows.length ? passed.length / rows.length : 0,
+      runsWithCompaction: compacted.length,
+      passedWithCompaction: compacted.filter((result) => result.valid && result.passed).length,
+    };
+  });
 }
 
 export function passAtK(matrix: { columns: string[]; rows: Record<string, MatrixCell[]> }): PassAtK {
@@ -148,6 +205,8 @@ export function perTask(matrix: { columns: string[]; rows: Record<string, Matrix
       passRate: cells.length ? passes / cells.length : 0,
       invalid: cells.filter((cell) => cell === 'invalid').length,
       runsWithCompaction: rows.filter((result) => result.reductions > 0).length,
+      skipped: cells.filter((cell) => cell === 'skipped').length,
+      agentStopped: rows.filter((result) => ['step-limit', 'repeated-failure', 'task-budget'].includes(stopReasonOf(result))).length,
       medianSteps: median(rows.filter((result) => result.valid).map((result) => result.steps)),
       meanCostUsd: rows.length ? sum(rows.map((result) => result.estimatedCostUsd ?? 0)) / rows.length : 0,
     };
@@ -173,13 +232,15 @@ export function compactionStats(results: EvaluationResult[]): CompactionStats {
  * old `reports`/`aggregate` keys and records how the numbers were computed,
  * so nobody has to patch it by hand afterwards.
  */
-export function buildRepeatedSummary(input: { provider: string; model: string; suite: EvalSuite; startedAt: string; taskCount: number; resultFiles: string[]; runs: RunInput[] }) {
+export function buildRepeatedSummary(input: { provider: string; model: string; suite: EvalSuite; runSettings?: RunSettings; startedAt: string; taskCount: number; resultFiles: string[]; runs: RunInput[] }) {
   const summary = summarize(input.runs);
   return {
     provider: input.provider,
     model: input.model,
     suite: input.suite,
-    reportedModels: [...new Set(input.runs.flatMap((run) => run.results.map((result) => result.model)))],
+    ...(input.runSettings ? { runSettings: input.runSettings } : {}),
+    // 'not-started' is the placeholder model of a budget-skipped row, not a model the API reported.
+    reportedModels: [...new Set(input.runs.flatMap((run) => run.results.map((result) => result.model)))].filter((model) => model !== 'not-started'),
     startedAt: input.startedAt,
     repeatCount: input.runs.length,
     taskCount: input.taskCount,
@@ -195,6 +256,8 @@ export function buildRepeatedSummary(input: { provider: string; model: string; s
     passAtK: summary.passAtK,
     perTask: summary.perTask,
     compaction: summary.compaction,
+    perCategory: summary.perCategory,
+    stopReasons: summary.stopReasons,
     resultFiles: input.resultFiles,
   };
 }
@@ -206,6 +269,7 @@ export function passMatrix(runs: RunInput[]): { columns: string[]; rows: Record<
     rows[taskId] = runs.map((run) => {
       const result = run.results.find((item) => item.taskId === taskId);
       if (!result) return 'missing';
+      if (stopReasonOf(result) === 'suite-budget-skip') return 'skipped';
       if (!result.valid) return 'invalid';
       return result.passed ? 'pass' : 'fail';
     });
@@ -311,7 +375,12 @@ export function formatSummary(summary: EvaluationSummary): string {
     `  (${summary.passAtK.method})`,
     '',
     'Per task (passes/runs, invalid runs, runs with compaction, median steps, mean cost)',
-    ...summary.perTask.map((row) => `  ${row.taskId.padEnd(4)} ${row.passes}/${row.runs}  invalid ${row.invalid}  compacted ${row.runsWithCompaction}  steps ${row.medianSteps}  $${row.meanCostUsd.toFixed(5)}`),
+    ...summary.perTask.map((row) => `  ${row.taskId.padEnd(4)} ${row.passes}/${row.runs}  invalid ${row.invalid}  skipped ${row.skipped}  agent-stopped ${row.agentStopped}  compacted ${row.runsWithCompaction}  steps ${row.medianSteps}  $${row.meanCostUsd.toFixed(5)}`),
+    '',
+    `Stop reasons: ${Object.entries(summary.stopReasons).map(([reason, count]) => `${reason} ${count}`).join(', ')}`,
+    `Max steps: ${summary.maxSteps.length ? summary.maxSteps.join(', ') : 'not recorded'}`,
+    ...(summary.stopReasons['suite-budget-skip'] ? [`  WARNING: ${summary.stopReasons['suite-budget-skip']} runs were skipped by the suite budget and count as not passed`] : []),
+    ...(summary.perCategory.length ? ['', 'Per category (passed/runs; compacted runs: passed/compacted)', ...summary.perCategory.map((row) => `  ${row.category.padEnd(12)} ${row.passed}/${row.runs}  compacted ${row.passedWithCompaction}/${row.runsWithCompaction}`)] : []),
     '',
     'Compaction',
     `  runs with reductions > 0: ${formatRate(summary.compaction.passedWithCompaction, summary.compaction.runsWithCompaction)}`,

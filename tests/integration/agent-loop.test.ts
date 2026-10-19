@@ -74,9 +74,9 @@ describe('agent loop', () => {
       expect(error.code).toBe('STEP_LIMIT');
       expect(Object.keys(error.details).sort()).toEqual([
         'durationMs', 'failedToolCalls', 'inputTokens', 'model', 'outputTokens', 'provider',
-        'recoveredFailures', 'reductions', 'steps', 'toolCalls', 'totalTokens',
+        'recoveredFailures', 'reductions', 'steps', 'stopReason', 'toolCalls', 'totalTokens',
       ]);
-      expect(error.details).toMatchObject({ provider: 'mock', model: 'mock', steps: 2, toolCalls: 2, failedToolCalls: 0, inputTokens: 20, outputTokens: 10, totalTokens: 30 });
+      expect(error.details).toMatchObject({ stopReason: 'step-limit', provider: 'mock', model: 'mock', steps: 2, toolCalls: 2, failedToolCalls: 0, inputTokens: 20, outputTokens: 10, totalTokens: 30 });
     } finally { await removeRoot(root); }
   });
 

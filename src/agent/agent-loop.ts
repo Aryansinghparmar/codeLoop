@@ -62,6 +62,8 @@ export class AgentLoop {
   /**
    * One task: compact -> call model -> stop if no tool calls -> execute tools -> check stops, repeated.
    * Stops: no tool calls (done), maxSteps, same tool failure repeated, USD budget, provider error, abort.
+   * The three agent stops (step limit, repeated failure, task budget) put a `stopReason` in the error
+   * details, so the evaluation runner can still grade the work instead of treating it as a crash.
    */
   public async run(prompt: string, callbacks: AgentCallbacks = {}, signal?: AbortSignal, history: LlmMessage[] = []): Promise<AgentRunResult> {
     const messages: LlmMessage[] = history.length > 0
@@ -77,7 +79,7 @@ export class AgentLoop {
 
       const response = await this.callModel(messages, stats, signal);
       if (stats.estimatedCostUsd !== undefined && stats.estimatedCostUsd > this.config.liveTaskBudgetUsd) {
-        throw this.failure('PROVIDER_ERROR', `The live task budget of $${this.config.liveTaskBudgetUsd.toFixed(2)} was reached.`, stats);
+        throw this.failure('PROVIDER_ERROR', `The live task budget of $${this.config.liveTaskBudgetUsd.toFixed(2)} was reached.`, stats, { stopReason: 'task-budget' });
       }
       messages.push(assistantMessage(response));
       if (response.text) callbacks.onText?.(response.text);
@@ -91,11 +93,11 @@ export class AgentLoop {
         const verdict = failures.record(call, result);
         stats.recoveredFailures = failures.recoveredFailures;
         if (verdict === 'abort') {
-          throw this.failure('TOOL_ERROR', `The same tool failure repeated ${failures.repeats} times.`, stats, { tool: call.name });
+          throw this.failure('TOOL_ERROR', `The same tool failure repeated ${failures.repeats} times.`, stats, { tool: call.name, stopReason: 'repeated-failure' });
         }
       }
     }
-    throw this.failure('STEP_LIMIT', `The agent stopped after ${this.config.maxSteps} steps.`, stats);
+    throw this.failure('STEP_LIMIT', `The agent stopped after ${this.config.maxSteps} steps.`, stats, { stopReason: 'step-limit' });
   }
 
   /** Shrinks the history in place when it is over the context budget (see ContextManager). */

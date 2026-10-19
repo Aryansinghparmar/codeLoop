@@ -3,7 +3,7 @@ import { createConfig } from '../config/config';
 import { loadEnvironment } from '../config/env';
 import { OpenAiResponsesProvider } from '../llm/openai/responses-provider';
 import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
-import { liveTasksFor, parseSuite, parseTaskIds } from './suites';
+import { liveConfigFor, liveTasksFor, parseSuite, parseTaskIds, runSettingsOf, warnAboutSkips } from './suites';
 import { EvaluationRunner } from './runner';
 import type { BenchmarkTask, EvalSuite } from './types';
 import { report } from './report-generator';
@@ -27,7 +27,10 @@ try {
   process.exit(2);
 }
 
-const config = createConfig(root);
+// v2 runs with 40 steps and a $3 suite cap per repeat unless CODELOOP_MAX_STEPS / CODELOOP_LIVE_SUITE_BUDGET_USD say otherwise.
+const config = liveConfigFor(createConfig(root), suite);
+const runSettings = runSettingsOf(config, suite, tasks.length);
+console.error(`Run settings: ${JSON.stringify(runSettings)}`);
 if (!process.env.OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is not set.');
   process.exit(2);
@@ -40,4 +43,5 @@ const results = await new EvaluationRunner(config).run(provider, tasks, new Nati
 const summary = report(results);
 const resultPath = join(runDirectory, `live-${provider.name}.jsonl`);
 writeRawResults(resultPath, results);
-console.log(JSON.stringify({ provider: provider.name, model: provider.model, suite, summary, resultFile: relativePath(root, resultPath), results }, null, 2));
+warnAboutSkips(results);
+console.log(JSON.stringify({ provider: provider.name, model: provider.model, suite, runSettings, summary, resultFile: relativePath(root, resultPath), results }, null, 2));

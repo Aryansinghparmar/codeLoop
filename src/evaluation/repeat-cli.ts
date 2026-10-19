@@ -4,7 +4,7 @@ import { createConfig } from '../config/config';
 import { loadEnvironment } from '../config/env';
 import { OpenAiResponsesProvider } from '../llm/openai/responses-provider';
 import { NativeProcessRunner } from '../infrastructure/process/native-process-runner';
-import { liveTasksFor, parseSuite, parseTaskIds } from './suites';
+import { liveConfigFor, liveTasksFor, parseSuite, parseTaskIds, runSettingsOf, warnAboutSkips } from './suites';
 import { EvaluationRunner } from './runner';
 import type { BenchmarkTask, EvalSuite } from './types';
 import { createRunDirectory, relativePath, writeRawResults } from './result-writer';
@@ -29,7 +29,10 @@ try {
 }
 
 const repeatCount = positiveInteger(process.env.CODELOOP_EVAL_REPEATS, 3);
-const config = createConfig(root);
+// v2 runs with 40 steps and a $3 suite cap per repeat unless CODELOOP_MAX_STEPS / CODELOOP_LIVE_SUITE_BUDGET_USD say otherwise.
+const config = liveConfigFor(createConfig(root), suite);
+const runSettings = runSettingsOf(config, suite, tasks.length);
+console.error(`Run settings: ${JSON.stringify(runSettings)}`);
 if (!process.env.OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is not set.');
   process.exit(2);
@@ -53,7 +56,8 @@ for (let repeat = 1; repeat <= repeatCount; repeat += 1) {
   resultFiles.push(relativePath(root, resultPath));
 }
 
-const summary = buildRepeatedSummary({ provider: provider.name, model: provider.model, suite, startedAt: started.toISOString(), taskCount: tasks.length, resultFiles, runs });
+warnAboutSkips(runs.flatMap((run) => run.results));
+const summary = buildRepeatedSummary({ provider: provider.name, model: provider.model, suite, runSettings, startedAt: started.toISOString(), taskCount: tasks.length, resultFiles, runs });
 const summaryPath = join(runDirectory, `live-${provider.name}-repeated-summary.json`);
 writeFileSync(summaryPath, JSON.stringify(summary, null, 2) + '\n', 'utf8');
 console.log(JSON.stringify({ ...summary, summaryPath: relativePath(root, summaryPath) }, null, 2));

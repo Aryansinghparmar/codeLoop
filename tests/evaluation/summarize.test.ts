@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { binomialUpperTail, clopperPearsonLower, summarize, STAT_METHOD } from '../../src/evaluation/summarize';
+import { binomialUpperTail, buildRepeatedSummary, clopperPearsonLower, summarize, STAT_METHOD } from '../../src/evaluation/summarize';
 import { agentRanTests } from '../../src/evaluation/trace-analysis';
 import type { EvaluationResult } from '../../src/evaluation/types';
 
@@ -71,8 +71,8 @@ describe('evaluation summariser', () => {
   test('lists every task with its passes, invalid runs and compaction', () => {
     const table = summarize(runs).perTask;
     expect(table).toEqual([
-      { taskId: 'T1', runs: 2, passes: 2, passRate: 1, invalid: 0, runsWithCompaction: 1, medianSteps: 2, meanCostUsd: 0.25 },
-      { taskId: 'T2', runs: 2, passes: 1, passRate: 0.5, invalid: 0, runsWithCompaction: 0, medianSteps: 2, meanCostUsd: 0.25 },
+      { taskId: 'T1', runs: 2, passes: 2, passRate: 1, invalid: 0, runsWithCompaction: 1, skipped: 0, agentStopped: 0, medianSteps: 2, meanCostUsd: 0.25 },
+      { taskId: 'T2', runs: 2, passes: 1, passRate: 0.5, invalid: 0, runsWithCompaction: 0, skipped: 0, agentStopped: 0, medianSteps: 2, meanCostUsd: 0.25 },
     ]);
   });
 
@@ -85,6 +85,27 @@ describe('evaluation summariser', () => {
     expect(none.passRateWithCompaction).toBeNull();
     const invalidCompacted = summarize([{ label: 'r', results: [row('T1', 1, true, [], { reductions: 2, valid: false })] }]).compaction;
     expect(invalidCompacted).toMatchObject({ runsWithCompaction: 1, passedWithCompaction: 0, passRateWithCompaction: 0 });
+  });
+
+  test('counts stop reasons, labels old invalid rows, and compares compaction within each category', () => {
+    const rows = [
+      row('V15', 1, true, [], { category: 'long-context', reductions: 2, stopReason: 'completed', maxSteps: 40 }),
+      row('V15', 1, false, [], { category: 'long-context', reductions: 3, stopReason: 'step-limit', maxSteps: 40 }),
+      row('V01', 1, true, [], { category: 'bugfix', stopReason: 'completed', maxSteps: 40 }),
+      row('V18', 0, false, [], { category: 'safety', valid: false, stopReason: 'suite-budget-skip', model: 'not-started', maxSteps: 40 }),
+      row('T9', 1, false, [], { valid: false, error: 'The same tool failure repeated 3 times.' }),
+    ];
+    const summary = summarize([{ label: 'r1', results: rows }]);
+    expect(summary.stopReasons).toEqual({ completed: 2, 'step-limit': 1, 'suite-budget-skip': 1, 'invalid (recorded before stop reasons)': 1 });
+    expect(summary.maxSteps).toEqual([40]);
+    expect(summary.perCategory).toEqual([
+      { category: 'long-context', runs: 2, passed: 1, passRate: 0.5, runsWithCompaction: 2, passedWithCompaction: 1 },
+      { category: 'bugfix', runs: 1, passed: 1, passRate: 1, runsWithCompaction: 0, passedWithCompaction: 0 },
+      { category: 'safety', runs: 1, passed: 0, passRate: 0, runsWithCompaction: 0, passedWithCompaction: 0 },
+    ]);
+    expect(summary.perTask.find((item) => item.taskId === 'V15')?.agentStopped).toBe(1);
+    const repeated = buildRepeatedSummary({ provider: 'openai', model: 'm', suite: 'v2', startedAt: 'now', taskCount: 4, resultFiles: [], runs: [{ label: 'r1', results: rows }] });
+    expect(repeated.reportedModels).toEqual(['test-model']);
   });
 
   test('records which suites the rows came from (unlabelled rows are v1)', () => {
