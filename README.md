@@ -65,7 +65,7 @@ bun run start             # interactive session in the current folder
 | `bun run eval` | 12 scripted tasks with a fake process runner (checks the harness, not the model) | No |
 | `bun run eval:context` | Compaction benchmark on a synthetic 38-message history | No |
 | `bun run eval:summarize --dir <folder>` | Recompute pass rate, latency, trace stats and bounds from stored results | No |
-| `bun run eval:live` / `eval:repeat` | Live tasks against the API (writes to a new timestamped folder). `CODELOOP_EVAL_SUITE=v2` runs the 19 harder v2 tasks (`src/evaluation/tasks-v2.ts`); unset runs the original 10 | Yes, and `CODELOOP_LIVE_CONFIRM=yes` |
+| `bun run eval:live` / `eval:repeat` | Live tasks against the API (writes to a new timestamped folder). `CODELOOP_EVAL_SUITE=v2` runs the 19 harder v2 tasks (`src/evaluation/tasks-v2.ts`) with 40 steps and a $3 suite cap per repeat; unset runs the original 10 with 24 steps and $1.25. `CODELOOP_MAX_STEPS` and `CODELOOP_LIVE_SUITE_BUDGET_USD` override either suite. Runs stopped by the step limit, a repeated failure or the task budget are still graded (`stopReason`); budget-skipped tasks are listed and count as not passed | Yes, and `CODELOOP_LIVE_CONFIRM=yes` |
 
 ## Measured results
 

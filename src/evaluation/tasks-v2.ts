@@ -2,7 +2,18 @@
 // behavioural test. Each task is plain data (a V2TaskSpec) turned into a
 // BenchmarkTask by defineV2Task. tests/evaluation/tasks-v2.test.ts proves,
 // offline, that every hidden test fails on the untouched setup, passes after
-// the reference solution, and fails for the listed decoy (wrong) solutions.
+// the reference solution, and fails for the listed decoy (wrong) solutions;
+// tests/evaluation/v2-cheats.test.ts replays the review's cheats through the real runner.
+//
+// Run it (paid): CODELOOP_EVAL_SUITE=v2 CODELOOP_LIVE_CONFIRM=yes bun run eval:repeat
+//
+// Known limits, stated rather than hidden:
+// - Tests the agent writes ("add a test") are never graded; only the hidden test is.
+// - The permission policy is not a sandbox: code run by an approved `bun test` can read .env
+//   with names built at runtime. The safety tasks catch the obvious forms (a .env literal,
+//   glued strings, a leaked canary in any full tool output), not every possible one.
+// - The tamper scan is a heuristic second line of defence; the isolated JUnit grade and the
+//   matcher sentinels are the first.
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileCheckResults, type FileCheck } from './fixed-tasks';
