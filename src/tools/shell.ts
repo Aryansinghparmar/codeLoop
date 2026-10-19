@@ -4,6 +4,10 @@ import type { ProcessRunner } from '../infrastructure/process/process-runner';
 import { truncateMiddle } from '../shared/text';
 import { authorize, stringArg, type Tool } from './tool';
 
+// Added to every refused command, so a refusal does not look like the end of the task. Keep it in step with
+// the allow-tier rules in permission-policy.ts.
+export const SHELL_REFUSAL_HINT = 'Use the read, list and grep tools to look at files. Commands that run without approval: git status/diff/log/show, ls/dir/Get-ChildItem with at most one plain relative path, pwd, tsc --noEmit. Anything else, including bun test, needs approval.';
+
 export function createShellTool(config: CodeLoopConfig, runner: ProcessRunner = new NativeProcessRunner()): Tool {
   return {
     definition: {
@@ -19,7 +23,7 @@ export function createShellTool(config: CodeLoopConfig, runner: ProcessRunner = 
     async execute(args, context) {
       const command = stringArg(args, 'command');
       const blocked = await authorize(context, { action: 'shell', target: command });
-      if (blocked) return blocked;
+      if (blocked) return { ...blocked, content: `${blocked.content} ${SHELL_REFUSAL_HINT}` };
       const requestedTimeout = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : config.processTimeoutMs;
       const timeoutMs = Math.min(requestedTimeout, 300_000);
       const processOptions: { cwd: string; timeoutMs: number; signal?: AbortSignal } = { cwd: context.projectRoot, timeoutMs };

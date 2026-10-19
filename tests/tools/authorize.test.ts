@@ -44,7 +44,7 @@ describe('authorize', () => {
     try {
       const context = { projectRoot: root, pathGuard: new PathGuard(root), permissionPolicy: fakePolicy('confirm'), approve: async () => false };
       const result = await authorize(context, request);
-      expect(result?.content).toBe('Write rejected by the user.');
+      expect(result?.content).toBe('Write rejected: policy said confirm It needs approval, which was not given.');
     } finally { await removeRoot(root); }
   });
 

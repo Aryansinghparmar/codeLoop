@@ -52,6 +52,7 @@ export async function authorize(context: ToolExecutionContext, request: Permissi
     return { ok: false, content: `${label} rejected: approval is required but no approver is available. ${permission.reason}` };
   }
   const approved = await context.approve({ ...request, detail: permission.reason });
-  if (approved !== true) return { ok: false, content: `${label} rejected by the user.` };
+  // Say why it needed approval: "rejected by the user" alone told the model nothing (and evals have no user).
+  if (approved !== true) return { ok: false, content: `${label} rejected: ${permission.reason} It needs approval, which was not given.` };
   return undefined;
 }

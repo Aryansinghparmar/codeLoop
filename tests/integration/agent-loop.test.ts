@@ -106,7 +106,17 @@ describe('agent loop', () => {
     expect(windows).toContain('`bun test`');
     expect(windows).toContain('denied');
     expect(buildSystemPrompt('/repo', 'linux')).toContain('run in sh');
-    expect(windows.split('\n').length).toBeLessThanOrEqual(15);
+    expect(windows.split('\n').length).toBeLessThanOrEqual(20);
+  });
+
+  // From the v2 root-cause analysis: the model gave up after refusals and ignored nextStartLine.
+  test('system prompt points to list/grep, paging and verifying, and says a refusal is not the end', () => {
+    const prompt = buildSystemPrompt('C:\\repo', 'win32');
+    expect(prompt).toContain('Use list to find files and grep to search code');
+    expect(prompt).toContain('nextStartLine');
+    expect(prompt).toContain('A refused command is not the end of the task');
+    expect(prompt).toContain('run `bun test` to verify');
+    expect(prompt).not.toContain('explain why you cannot continue');
   });
 
   test('the same tool failure three times in a row stops the run', async () => {

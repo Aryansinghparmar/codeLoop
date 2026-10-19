@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createConfig } from '../../src/config/config';
+import { isRejectedShellResult } from '../../src/evaluation/trace-analysis';
 import { createBuiltinRegistry } from '../../src/tools/builtins';
 import { temporaryRoot, removeRoot } from '../helpers';
 
@@ -38,6 +39,18 @@ describe('shell tool', () => {
     const result = await runShell('bun test tests/pass.test.ts');
     expect(result.ok).toBe(false);
     expect(result.content).toContain('rejected');
+  });
+
+  test('a refused command says why and what still works, and keeps the rejected/denied word', async () => {
+    const rejected = await runShell('Get-ChildItem -Recurse src', async () => false);
+    expect(rejected.ok).toBe(false);
+    expect(rejected.content).toStartWith('Shell rejected: The listing argument is not a plain relative path.');
+    expect(rejected.content).toContain('Use the read, list and grep tools');
+    expect(rejected.content).not.toContain('by the user');
+    const denied = await runShell('Get-Content .env', async () => true);
+    expect(denied.content).toStartWith('Shell denied: The command references a protected file');
+    expect(denied.content).toContain('Use the read, list and grep tools');
+    expect(isRejectedShellResult(`fail shell: ${rejected.content}`)).toBe(true);
   });
 
   test('runs an allow-tier command without asking', async () => {

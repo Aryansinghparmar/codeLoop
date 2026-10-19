@@ -39,9 +39,12 @@ export function buildSystemPrompt(projectRoot: string, platform: string = proces
     `Project root: ${projectRoot}. Work only inside it; tool paths are relative to it.`,
     `Today is ${today.toISOString().slice(0, 10)}.`,
     'The test runner is `bun test`.',
+    'Use list to find files and grep to search code; they are faster and safer than shell commands for that.',
     'Read a file before editing it. Use edit for existing files and write for new files.',
-    'Use shell only when needed.',
-    'The user may deny commands; if a command is denied, try another approach or explain why you cannot continue.',
+    'If read returns nextStartLine, the file continues past what you saw: keep reading from there, or grep for what you need, before concluding.',
+    'Use shell only when needed. Most commands need approval and may be denied or rejected.',
+    'A refused command is not the end of the task: continue with read, list and grep.',
+    'After changing code, run `bun test` to verify before you finish.',
     'Never expose secrets. Stop when the task is complete and report the evidence.',
   ].join('\n');
 }
