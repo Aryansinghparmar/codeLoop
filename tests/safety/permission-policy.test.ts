@@ -184,6 +184,11 @@ describe('permission policy', () => {
     ['read', 'README.md', 'allow'],
     ['read', '.env', 'deny'],
     ['read', '../outside.txt', 'deny'],
+    // list and grep authorize their start directory as a read.
+    ['read', '.', 'allow'],
+    ['read', 'src', 'allow'],
+    ['read', '.git', 'deny'],
+    ['read', '..', 'deny'],
   ];
 
   test.each(fileRows)('%s %p -> %s', (action, target, expected) => {

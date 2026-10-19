@@ -38,6 +38,7 @@ export function createReadTool(config: CodeLoopConfig): Tool {
       // Check the file before loading it, and never put the absolute local path in a message.
       if (!existsSync(path)) return failure(`${input} does not exist.`);
       const stat = statSync(path);
+      if (stat.isDirectory()) return failure(`${input} is a directory. Use the list tool to see what it contains.`);
       if (!stat.isFile()) return failure(`${input} is not a regular file.`);
       if (stat.size > MAX_READ_BYTES) {
         return failure(`${input} is ${stat.size} bytes, over the ${MAX_READ_BYTES}-byte read limit. Use the shell tool to inspect part of it.`);
