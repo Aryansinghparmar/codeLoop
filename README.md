@@ -89,7 +89,18 @@ Both campaigns use the same 10 small live tasks × 3 repeats. Raw traces are in 
 | Agent's own test run passed | 7/30 runs | 29/30 runs |
 | Failed tool calls | 148/233 | 61/162 |
 
-Context benchmark (`eval:context`): 74,151 → 20,632 estimated tokens (−72.18%) on a synthetic 38-message history, using the window stage.
+**Eval v2: a harder 19-task suite with hidden behavioural tests** (multi-file fixes, failing-test discovery, features, refactors, long files, safety), `gpt-6-luna`, 3 repeats:
+
+| | v2 run 1 | v2 run 2 (final) |
+|---|---|---|
+| Pass rate | 24/57 (42%) | **56/57 (98%)**, pass@3 = 1.00, pass^3 = 0.95 |
+| What it measured | 15 grader false positives + an agent that couldn't search | after fixing both |
+| Median / P95 latency | 27.4 s / 79.4 s | 22.2 s / 47.7 s |
+| Shell calls refused | 106 | 0 |
+
+Run 1's failures were root-caused before anything changed. 15 were grader bugs, now fixed with tests. The other 18 were the agent unable to find code, which led to the read-only `list` and `grep` tools. Task prompts and hidden tests did not change between runs. Details: [`evals/published/README.md`](evals/published/README.md).
+
+Context benchmark (`eval:context`): 74,151 → 20,632 estimated tokens (−72.18%) on a synthetic 38-message history, using the window stage. In live runs compaction has not fired yet: with `grep` the agent reads only what it needs.
 
 Read [`evals/published/README.md`](evals/published/README.md) before quoting these. It covers correlated repeats, nearest-rank P95, the small task set and estimated costs.
 

@@ -37,3 +37,52 @@ No API key or network access is needed.
 ## Provenance
 - These files are copies of the local result files. Local temp paths are replaced with `<tmp>/` and nothing else is changed. Scanned for keys, tokens and user paths before publishing.
 - In the `cv-baseline` campaign, the stored summary JSON (not published here) was edited by hand after the run to switch its aggregate from "mean of per-run medians / max of per-run P95s" to pooled statistics. The raw JSONL was never edited. `eval:summarize` now regenerates the summary from these raw files, so no hand-maintained summary is needed.
+
+## Eval v2: harder suite with hidden tests (2026-10-19)
+
+19 tasks (`src/evaluation/tasks-v2*.ts`):
+- multi-file bug fixes; "make the suite pass" tasks where the bug isn't where the failing test points; small features; multi-file refactors; long files; long-context reading; two safety tasks.
+
+How the grading works:
+- Every task is graded by **hidden behavioural tests**, written after the agent stops and run in an isolated copy via bun's JUnit reporter, with matcher sentinels and a tamper scan.
+- Offline validity tests prove each task **fails untouched** and **passes with a reference solution**.
+- The suite was designed by one agent and red-teamed by another before any paid run (1 blocker, 6 high findings, all fixed).
+- Same model `gpt-6-luna`, 3 repeats, max 40 steps.
+
+```bash
+CODELOOP_EVAL_SUITE=v2 CODELOOP_LIVE_CONFIRM=yes bun run eval:repeat     # live, paid
+bun run eval:summarize --dir evals/published/2026-10-19-v2-run2-final   # offline
+```
+
+| | `2026-10-19-v2-run1-grader-bug` | `2026-10-19-v2-run2-final` |
+|---|---|---|
+| Pass rate | 24/57 (42.1%) | **56/57 (98.2%)** |
+| pass@1 / pass@3 / pass^3 | 0.421 / 0.632 / 0.211 | **0.982 / 1.000 / 0.947** |
+| 95% lower bound (Clopper-Pearson) | 0.310 | 0.920 |
+| Median / P95 latency | 27.4 s / 79.4 s | 22.2 s / 47.7 s |
+| Failed tool calls | 321/776 | 47/822 |
+| Shell calls refused | 106 | 0 |
+| Compaction fired | 0 runs | 0 runs |
+| Estimated cost | $0.448 | $0.344 |
+
+**Why run 1 is not a measure of the agent.** A root-cause analysis of all 33 failures found 15 grader false positives:
+- 14 times the tamper scan flagged the agent's own legitimate `*.test.ts` files;
+- once, the `.env` rule matched the text `process\.env`.
+
+The other 18 failures were all the agent being unable to find code. With no list or search tool, its shell searches were refused and it gave up, or it didn't page through long files. There were no wrong fixes and no loops.
+
+**What changed between the runs** (see `CHANGELOG.md`, "After eval v2"):
+- both grader false positives fixed, each with a regression test;
+- new read-only `list` and `grep` tools (PathGuard on every file; security-reviewed);
+- refusal messages that explain the alternative;
+- prompt guidance;
+- `read` pages long files by whole lines.
+
+No task prompt or hidden test changed.
+
+**Run 2's single failure** is genuine: V16 repeat 2 got the retry "attempt budget" logic wrong. All 56 passes are confirmed by the hidden JUnit report and a clean tamper scan.
+
+**Caveats:**
+- 19 tasks × 3 correlated repeats is still a small sample.
+- The tasks are synthetic, though harder than v1.
+- **Compaction never fired.** With `grep`, the agent reads only what it needs, and the peak context stayed under the 32K budget.
