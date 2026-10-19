@@ -46,7 +46,7 @@ No API key or network access is needed.
 How the grading works:
 - Every task is graded by **hidden behavioural tests**, written after the agent stops and run in an isolated copy via bun's JUnit reporter, with matcher sentinels and a tamper scan.
 - Offline validity tests prove each task **fails untouched** and **passes with a reference solution**.
-- The suite was designed by one agent and red-teamed by another before any paid run (1 blocker, 6 high findings, all fixed).
+- The suite was designed by one agent and red-teamed by another before any paid run (1 blocker, 5 high findings, all fixed).
 - Same model `gpt-6-luna`, 3 repeats, max 40 steps.
 
 ```bash
