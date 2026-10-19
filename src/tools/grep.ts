@@ -25,7 +25,7 @@ const MAX_LINE_CHARS = 200;
 type StopReason = 'time' | 'files' | 'entries' | 'bytes';
 
 const STOP_NOTES: Record<StopReason, string> = {
-  time: `Stopped after ${GREP_TIME_LIMIT_MS / 1000} s: the pattern is too slow (nested quantifiers or several .*). Narrow the path, use a simpler pattern, or set literal: true.`,
+  time: `Stopped after ${GREP_TIME_LIMIT_MS / 1000} s. Narrow the path, use a simpler pattern (nested quantifiers and several .* are slow), or set literal: true.`,
   files: `Searched only the first ${MAX_GREP_FILES} files. Use a narrower path.`,
   entries: `Stopped after visiting ${MAX_GREP_ENTRIES} directory entries. Use a narrower path.`,
   bytes: `Stopped after reading ${MAX_GREP_BYTES / 1024 / 1024} MB. Use a narrower path.`,
@@ -55,6 +55,33 @@ function openable(context: ToolExecutionContext, path: string): string | undefin
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The file's text, or no text when it is skipped: refused above, not a regular file, over 2 MB,
+ * binary, or failing to open (locked, deleted mid-walk). An fs error is never passed on: its
+ * message holds the absolute local path. `bytesRead` feeds the MAX_GREP_BYTES budget.
+ */
+function loadText(context: ToolExecutionContext, candidate: string): { text?: string; bytesRead: number } {
+  const path = openable(context, candidate);
+  if (!path) return { bytesRead: 0 };
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > MAX_READ_BYTES) return { bytesRead: 0 };
+    const bytes = readFileSync(path);
+    if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { bytesRead: bytes.length };
+    return { text: bytes.toString('utf8'), bytesRead: bytes.length };
+  } catch {
+    return { bytesRead: 0 };
+  }
+}
+
+/** Up to MAX_LINE_CHARS of the line, starting a little before the match so the match is always shown. */
+function snippet(line: string, at: number): string {
+  const text = line.trim();
+  if (text.length <= MAX_LINE_CHARS) return text;
+  const start = Math.max(0, Math.min(at - 40, line.length - MAX_LINE_CHARS));
+  return `${start > 0 ? '...' : ''}${line.slice(start, start + MAX_LINE_CHARS)}${start + MAX_LINE_CHARS < line.length ? '...' : ''}`;
 }
 
 /** Files under `directory`, breadth-first, without entering protected, skipped or linked entries. */
@@ -125,29 +152,22 @@ export const grepTool: Tool = {
       if (performance.now() > deadline) stop = 'time';
       else if (bytesRead > MAX_GREP_BYTES) stop = 'bytes';
       if (stop === 'time' || stop === 'bytes') break;
-      const path = openable(context, file.path);
-      const stat = path ? statSync(path) : undefined;
-      if (!path || !stat?.isFile() || stat.size > MAX_READ_BYTES) {
-        filesSkipped += 1;
-        continue;
-      }
-      const bytes = readFileSync(path);
-      bytesRead += bytes.length;
-      if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
+      const loaded = loadText(context, file.path);
+      bytesRead += loaded.bytesRead;
+      if (loaded.text === undefined) {
         filesSkipped += 1;
         continue;
       }
       filesScanned += 1;
-      const lines = bytes.toString('utf8').split(/\r?\n/u);
+      const lines = loaded.text.split(/\r?\n/u);
       for (let index = 0; index < lines.length && matches.length <= limit; index += 1) {
         if (performance.now() > deadline) {
           stop = 'time';
           break;
         }
         const line = lines[index] ?? '';
-        if (!regex.test(line.slice(0, MAX_SCAN_CHARS))) continue;
-        const text = line.trim();
-        matches.push(`${file.relativePath}:${index + 1}: ${text.length > MAX_LINE_CHARS ? `${text.slice(0, MAX_LINE_CHARS)}...` : text}`);
+        const found = regex.exec(line.slice(0, MAX_SCAN_CHARS));
+        if (found) matches.push(`${file.relativePath}:${index + 1}: ${snippet(line, found.index)}`);
       }
     }
 
@@ -157,6 +177,7 @@ export const grepTool: Tool = {
     const payload: Record<string, unknown> = { pattern, path: input, matches, filesScanned, filesSkipped, truncated };
     if (stop) payload.note = STOP_NOTES[stop];
     else if (hitMatchCap) payload.note = `Stopped at ${limit} matches. Use a more specific pattern or a narrower path to see the rest.`;
+    else if (matches.length === 0 && filesScanned === 0 && filesSkipped > 0) payload.note = 'No file was searched: every file was skipped (binary, over 2 MB, or could not be opened).';
     else if (matches.length === 0) payload.note = 'No matches.';
     return { ok: true, content: JSON.stringify(payload), truncated };
   },

@@ -24,7 +24,13 @@ export interface WalkEntry {
 
 /** Reads one directory and classifies every entry through PathGuard. Directories come first, then by name. */
 export function readDirectory(guard: PathGuard, directory: string): WalkEntry[] {
-  const entries = readdirSync(directory, { withFileTypes: true }).map((dirent) => classify(guard, directory, dirent));
+  let dirents: Dirent[];
+  try {
+    dirents = readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return []; // Deleted or unreadable mid-walk. The fs error would hold the absolute local path.
+  }
+  const entries = dirents.map((dirent) => classify(guard, directory, dirent));
   return entries.sort((a, b) => rank(a) - rank(b) || (a.relativePath < b.relativePath ? -1 : 1));
 }
 

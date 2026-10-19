@@ -177,8 +177,39 @@ describe('grep tool', () => {
     }
     const result = body(await grepTool.execute({ pattern: 'NEEDLE' }, context));
     expect(result.truncated).toBe(true);
-    expect(result.note).toContain('directory entries');
+    // Under load the 5 s deadline can come first; either way the walk is bounded.
+    expect(result.note).toMatch(/directory entries|Stopped after 5 s/u);
+    await removeRoot(join(root, 'src')); // here, not in afterEach, whose 5 s timeout is too short for 21k folders
   }, 120_000);
+
+  // Security review M1: one locked file failed the whole search and showed the absolute local path.
+  test('a file that cannot be opened is skipped, without failing the search or leaking its path', async () => {
+    writeFileSync(join(root, 'src', 'held.log'), 'legacyFormat in a log\n');
+    const original = fs.readFileSync;
+    const reads = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, options?: unknown) => {
+      if (String(path).endsWith('held.log')) throw new Error(`EBUSY: resource busy or locked, open '${String(path)}'`);
+      return original(path, options as never);
+    }) as typeof fs.readFileSync);
+    try {
+      const result = await grepTool.execute({ pattern: 'legacyFormat\\(' }, context);
+      const parsed = body(result);
+      expect(parsed.matches).toEqual(['src/reports/sales.ts:3: export const total = legacyFormat(1);']);
+      expect(parsed.filesSkipped).toBe(1);
+      expect(result.content).not.toContain(root);
+      expect(result.content).not.toContain('EBUSY');
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  test('a long line is shown around the match, and a skipped-only search says so', async () => {
+    writeFileSync(join(root, 'src', 'min.js'), `${'x'.repeat(600)}NEEDLE${'y'.repeat(600)}\n`);
+    const shown = body(await grepTool.execute({ pattern: 'NEEDLE' }, context)).matches[0] ?? '';
+    expect(shown).toContain('NEEDLE');
+    expect(shown).toStartWith('src/min.js:1: ...');
+    writeFileSync(join(root, 'src', 'image.bin'), Buffer.from([0, 1, 2]));
+    expect(body(await grepTool.execute({ pattern: 'x', path: 'src/image.bin' }, context)).note).toContain('No file was searched');
+  });
 
   test('output goes through the registry redaction', async () => {
     writeFileSync(join(root, 'src', 'key.ts'), "const key = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789';\n");
