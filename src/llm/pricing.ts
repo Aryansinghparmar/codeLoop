@@ -11,7 +11,7 @@ export interface ProviderPrice {
 // USD per 1M tokens. Budget caps depend on this table: a model missing here must fail loudly, never cost $0.
 export const providerPrices: Readonly<Record<string, ProviderPrice>> = {
   // Source: third-party aggregators citing OpenAI pricing, checked 2026-10-18; one source lists $0.20/$1.00 — verify on openai.com/api/pricing.
-  'gpt-6-luna': { inputPerMillion: 0.1, outputPerMillion: 0.5, source: 'third-party aggregators citing OpenAI pricing (unverified)', checkedAt: '2026-10-18' },
+  'gpt-6-luna': { inputPerMillion: 0.1, outputPerMillion: 0.5, source: 'OpenAI API pricing page (developers.openai.com/api/docs/pricing), standard tier; cached input $0.01/1M not modelled', checkedAt: '2026-10-19' },
   // Kept so the historical eval results (run on this model) can still be costed.
   'gpt-5.6-luna': { inputPerMillion: 0.2, outputPerMillion: 1.2, source: 'OpenAI model documentation', checkedAt: '2026-08-14' },
 };
