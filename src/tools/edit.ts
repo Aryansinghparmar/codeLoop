@@ -56,7 +56,10 @@ export const editTool: Tool = {
 
     // Report the path the model gave us, never the absolute local path.
     if (!existsSync(path)) return failure(`${input} does not exist; use write to create it.`);
-    if (!statSync(path).isFile()) return failure(`${input} is not a regular file.`);
+    const stat = statSync(path);
+    if (!stat.isFile()) return failure(`${input} is not a regular file.`);
+    // A hard link shares its content with another name (possibly `.env`); editing it would change that file.
+    if (stat.nlink > 1) return failure(`${input} has ${stat.nlink} hard links, so it may be a protected file under another name.`);
     const current = readFileSync(path, 'utf8');
 
     // The read tool hides '\r', so the model sends LF text. Match the file's CRLF line endings instead.

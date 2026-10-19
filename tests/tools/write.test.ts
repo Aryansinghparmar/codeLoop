@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readFile, writeFile } from 'node:fs/promises';
+import { linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PermissionPolicy } from '../../src/permissions/permission-policy';
 import { PathGuard } from '../../src/permissions/path-guard';
 import type { ToolExecutionContext } from '../../src/tools/tool';
+import { editTool } from '../../src/tools/edit';
 import { writeTool } from '../../src/tools/write';
 import { temporaryRoot, removeRoot } from '../helpers';
 
@@ -40,5 +42,23 @@ describe('write tool', () => {
     const result = await writeTool.execute({ path: '.', content: 'x' }, context);
     expect(result.ok).toBe(false);
     expect(result.content).toContain('not a regular file');
+  });
+});
+
+describe('write and edit refuse hard-linked files', () => {
+  test('a hard link to .env can be neither overwritten nor edited', async () => {
+    const linkRoot = await temporaryRoot();
+    try {
+      writeFileSync(join(linkRoot, '.env'), 'SECRET=keep-me\n');
+      mkdirSync(join(linkRoot, 'src'));
+      linkSync(join(linkRoot, '.env'), join(linkRoot, 'src', 'notes.txt'));
+      const guard = new PathGuard(linkRoot);
+      const linkContext: ToolExecutionContext = { projectRoot: linkRoot, pathGuard: guard, permissionPolicy: new PermissionPolicy(guard), approve: async () => true };
+      const written = await writeTool.execute({ path: 'src/notes.txt', content: 'SECRET=changed\n' }, linkContext);
+      const edited = await editTool.execute({ path: 'src/notes.txt', oldText: 'keep-me', newText: 'changed' }, linkContext);
+      expect(written.ok).toBe(false);
+      expect(edited.ok).toBe(false);
+      expect(readFileSync(join(linkRoot, '.env'), 'utf8')).toBe('SECRET=keep-me\n');
+    } finally { await removeRoot(linkRoot); }
   });
 });

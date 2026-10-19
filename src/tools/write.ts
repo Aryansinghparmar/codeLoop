@@ -22,6 +22,8 @@ export const writeTool: Tool = {
 
     const previous = existsSync(path) ? statSync(path) : undefined;
     if (previous && !previous.isFile()) return { ok: false, content: `Write failed: ${input} exists and is not a regular file.` };
+    // A hard link shares its content with another name (possibly `.env`), so overwriting it would change that file.
+    if (previous && previous.nlink > 1) return { ok: false, content: `Write failed: ${input} has ${previous.nlink} hard links, so it may be a protected file under another name.` };
 
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content, 'utf8');
