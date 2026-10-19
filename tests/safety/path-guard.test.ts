@@ -49,8 +49,33 @@ describe('path guard', () => {
     ['../root2/secret.txt'],
     ['id_rsa'],
     ['server.pem'],
+    // Security review M2: credential files that grep used to sweep up.
+    ['.npmrc'],
+    ['.yarnrc.yml'],
+    ['.netrc'],
+    ['_netrc'],
+    ['.envrc'],
+    ['.pypirc'],
+    ['.git-credentials'],
+    ['infra/terraform.tfvars'],
+    ['infra/prod.tfvars.json'],
+    ['.docker/config.json'],
+    ['keys/release.jks'],
+    ['keys/app.keystore'],
+    ['vault.kdbx'],
   ])('denies %p', (input) => {
     expect(() => guard.resolveInside(input)).toThrow();
+  });
+
+  // Security review L1: Win32 ignores trailing dots and spaces, and `\\?\` paths can create such names.
+  test.each([['.env.'], ['.env '], ['.env..'], ['src/.git./config'], ['.git /config'], ['.npmrc.']])('denies %p (trailing dot or space)', (name) => {
+    expect(guard.isHardDenied(join(root, name))).toBe(true);
+  });
+
+  test('still allows ordinary files with similar names', () => {
+    for (const name of ['src/npmrc.ts', 'docs/netrc.md', 'tests/fixtures/sample.env', 'src/settings/parse-env.ts', 'src/keyboard.ts', 'README.md']) {
+      expect([name, guard.isHardDenied(join(root, name))]).toEqual([name, false]);
+    }
   });
 
   test('denies a sibling directory that shares the root prefix (/root vs /root2)', () => {

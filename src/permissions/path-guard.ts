@@ -2,10 +2,14 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { CodeLoopError } from '../shared/errors';
 
-const SECRET_FILE = /(^|[\\/])\.env(?:\.[^\\/]+)?$/iu;
-const PROTECTED_COMPONENT = /(^|[\\/])(?:\.git|\.codeloop|\.ssh|\.aws|\.azure|\.kube)([\\/]|$)/iu;
+const SECRET_FILE = /(^|[\\/])\.env(?:\.[^\\/]*)?$/iu;
+const PROTECTED_COMPONENT = /(^|[\\/])(?:\.git|\.codeloop|\.ssh|\.aws|\.azure|\.kube|\.docker)([\\/]|$)/iu;
 const SECRET_NAME = /(^|[\\/])(?:credentials|secrets|secret|service-account|token)\.(?:json|ya?ml|toml)$/iu;
-const SECRET_EXTENSION = /\.(?:pem|key|pfx|p12)$/iu;
+// Tool credential files: npm/yarn/PyPI tokens, netrc passwords, direnv, git's credential store.
+const CREDENTIAL_FILE = /(^|[\\/])(?:\.envrc|\.npmrc|\.yarnrc\.yml|\.netrc|_netrc|\.pypirc|\.git-credentials)$/iu;
+const SECRET_EXTENSION = /\.(?:pem|key|pfx|p12|jks|keystore|kdbx|tfvars|tfvars\.json)$/iu;
+// Win32 drops trailing dots and spaces from a name, and `\\?\` paths can create such names.
+const TRAILING_DOTS_OR_SPACES = /[. ]+$/u;
 const SECRET_KEY_NAME = /(^|[\\/])(?:id_rsa|id_ed25519|known_hosts)$/iu;
 const SYSTEM_PATH = /[\\/]Windows[\\/](?:System32|SysWOW64|WinSxS|Boot|Servicing)(?:[\\/]|$)|[\\/]Program Files(?: \(x86\))?(?:[\\/]|$)|[\\/]ProgramData(?:[\\/]|$)|[\\/]AppData[\\/](?:Local|Roaming)[\\/]Microsoft[\\/](?:Credentials|Vault)(?:[\\/]|$)/iu;
 const WINDOWS_DRIVE_PREFIX = /^(?:\\\\[?.]\\)?[a-z]:/iu;
@@ -39,11 +43,13 @@ export class PathGuard {
   }
 
   public isHardDenied(candidate: string): boolean {
-    const normalised = candidate.replaceAll('/', '\\');
+    // Match each name without trailing dots or spaces, so `.env.` and `.git ` count as `.env` and `.git`.
+    const normalised = candidate.replaceAll('/', '\\').split('\\').map((part) => part.replace(TRAILING_DOTS_OR_SPACES, '')).join('\\');
     const envExample = normalised.split('\\').at(-1)?.toLowerCase() === '.env.example';
     return (SECRET_FILE.test(normalised) && !envExample)
       || PROTECTED_COMPONENT.test(normalised)
       || SECRET_NAME.test(normalised)
+      || CREDENTIAL_FILE.test(normalised)
       || SECRET_EXTENSION.test(normalised)
       || SECRET_KEY_NAME.test(normalised)
       || SYSTEM_PATH.test(normalised);

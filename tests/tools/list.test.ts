@@ -60,6 +60,12 @@ describe('list tool', () => {
     expect(entries.some((entry) => entry.startsWith('node_modules/pkg'))).toBe(false);
   });
 
+  test('marks <name>.env files and hides nothing else', async () => {
+    writeFileSync(join(root, 'src', 'prod.env'), 'KEY=1\n');
+    writeFileSync(join(root, 'src', '.npmrc'), '//registry/:_authToken=x\n');
+    expect(body(await listTool.execute({ path: 'src' }, context)).entries).toEqual(['src/cache/', 'src/.npmrc (protected)', 'src/index.ts', 'src/prod.env (may hold secrets: grep skips it)']);
+  });
+
   test('lists a subdirectory without recursing by default', async () => {
     expect(body(await listTool.execute({ path: 'src' }, context)).entries).toEqual(['src/cache/', 'src/index.ts']);
   });

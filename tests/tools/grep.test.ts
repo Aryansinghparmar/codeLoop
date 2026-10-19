@@ -113,6 +113,20 @@ describe('grep tool', () => {
     expect((await createReadTool(createConfig(root)).execute({ path: 'node_modules/pkg/index.d.ts' }, context)).ok).toBe(true);
   });
 
+  // Security review M2: `grep auth|pass|secret` returned .npmrc, .netrc, production.env, terraform.tfvars, .docker/config.json.
+  test('never sweeps up credential files or <name>.env files', async () => {
+    const canary = 'CANARY_CRED_5512';
+    for (const file of ['.npmrc', '.netrc', '.envrc', '.pypirc', '.git-credentials', 'config/production.env', 'infra/terraform.tfvars', '.docker/config.json']) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), `${canary}\n`);
+    }
+    expect(body(await grepTool.execute({ pattern: canary }, context)).matches).toEqual([]);
+    // A sample like tests/fixtures/sample.env is still readable when named on purpose.
+    mkdirSync(join(root, 'tests', 'fixtures'), { recursive: true });
+    writeFileSync(join(root, 'tests', 'fixtures', 'sample.env'), 'APP_NAME=demo\n');
+    expect((await createReadTool(createConfig(root)).execute({ path: 'tests/fixtures/sample.env' }, context)).ok).toBe(true);
+  });
+
   test('refuses a protected file or directory as the search path', async () => {
     writeFileSync(join(root, '.env'), 'X=1\n');
     const { registry, pathGuard, permissionPolicy } = createBuiltinRegistry(createConfig(root));

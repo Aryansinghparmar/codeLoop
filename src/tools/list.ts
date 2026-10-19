@@ -13,6 +13,7 @@ const SUFFIX: Record<EntryKind, string> = {
   skipped: '/ (skipped)',
   protected: ' (protected)',
   link: ' (link, not followed)',
+  sensitive: ' (may hold secrets: grep skips it)',
   other: ' (special file)',
 };
 
