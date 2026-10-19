@@ -61,6 +61,20 @@ describe('edit tool', () => {
     expect(await readFile(join(root, 'value.ts'), 'utf8')).toBe('value value\n');
   });
 
+  test('lists the line of each occurrence, including one far down a CRLF file', async () => {
+    const lines = Array.from({ length: 620 }, (_, index) => `const line${index + 1} = ${index + 1};`);
+    for (const lineNumber of [1, 5, 615]) lines[lineNumber - 1] = `legacyFormat(${lineNumber});`;
+    await writeFile(join(root, 'payroll.ts'), `${lines.join('\r\n')}\r\n`);
+    const result = await editTool.execute({ path: 'payroll.ts', oldText: 'legacyFormat(', newText: 'formatMoney(' }, context);
+    expect(result.content).toContain('occurs 3 times in payroll.ts (starting on lines 1, 5, 615)');
+  });
+
+  test('caps the occurrence lines at ten', async () => {
+    await writeFile(join(root, 'many.ts'), 'x\n'.repeat(12));
+    const result = await editTool.execute({ path: 'many.ts', oldText: 'x', newText: 'y' }, context);
+    expect(result.content).toContain('occurs 12 times in many.ts (starting on lines 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, ...)');
+  });
+
   test('rejects a no-op edit', async () => {
     await writeFile(join(root, 'value.ts'), 'same\n');
     const result = await editTool.execute({ path: 'value.ts', oldText: 'same', newText: 'same' }, context);

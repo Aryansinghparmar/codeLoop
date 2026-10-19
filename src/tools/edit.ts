@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { authorize, stringArg, textArg, type Tool, type ToolResult } from './tool';
 
 const MAX_HINT_LINES = 3;
+const MAX_OCCURRENCE_LINES = 10;
 
 function failure(message: string): ToolResult {
   return { ok: false, content: `Edit failed: ${message}` };
@@ -21,6 +22,15 @@ function findHintLines(current: string, oldText: string): number[] {
     if (lines[index]?.includes(firstLine)) hits.push(index + 1);
   }
   return hits;
+}
+
+/** 1-based line numbers where each occurrence of oldText starts (at most ten), so the model can see the ones it missed. */
+function occurrenceLines(current: string, oldText: string): number[] {
+  const lines: number[] = [];
+  for (let index = current.indexOf(oldText); index !== -1 && lines.length < MAX_OCCURRENCE_LINES; index = current.indexOf(oldText, index + oldText.length)) {
+    lines.push(current.slice(0, index).split('\n').length);
+  }
+  return lines;
 }
 
 export const editTool: Tool = {
@@ -62,7 +72,9 @@ export const editTool: Tool = {
       return failure(`oldText was not found in ${input}. Re-read the file and copy the text exactly, including whitespace.${hintText}`);
     }
     if (occurrences > 1) {
-      return failure(`oldText occurs ${occurrences} times in ${input}, but it must occur exactly once. Include more surrounding lines to make it unique.`);
+      const lines = occurrenceLines(current, oldText);
+      const more = occurrences > lines.length ? ', ...' : '';
+      return failure(`oldText occurs ${occurrences} times in ${input} (starting on lines ${lines.join(', ')}${more}), but it must occur exactly once. Include more surrounding lines to make it unique.`);
     }
 
     // Index slicing, not String.replace: replace() would expand $&, $', $` and $$ in newText.
