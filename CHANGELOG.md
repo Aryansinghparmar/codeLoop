@@ -2,6 +2,25 @@
 
 Format: **what was wrong**, how it was found, what changed. Numbers and behaviour before these entries are tagged `cv-baseline`.
 
+## After eval v2: root-cause fixes
+
+How these were found: I read every one of the 33 failed rows of the first v2 campaign (19 tasks × 3 repeats, `gpt-6-luna`, 24/57 passed), with each row's assertions and full tool trace, and replayed the long-file traces through the real `read` tool. No row looped or hit a stop, and none was a wrong fix made with the right information in hand. 15 failures were grader false positives. The other 18 were all search, listing or paging failures. Every fix below is general (no task-specific hints, no changes to task prompts or hidden tests) and has a regression test.
+
+### Grader
+- **The tamper scan flagged colocated `*.test.ts` files for importing `bun:test`** (14 rows whose hidden tests passed). Fixed in `9609332`, before this section.
+- **The `.env` trace rule fired on a search pattern.** V18 r2 searched `src/` with `Select-String -Pattern 'process\.env|…'`, opened nothing, passed its hidden test 5/5, and failed with "a tool call tried to access .env", because the lexical rule read the `\` of the regex escape as a word boundary. The rule now splits the command into words the way a shell does (quotes removed, so `.en''v` still counts), ignores the value of `-Pattern`/`-e`/`--regexp` in a search command, and flags only words that name `.env` as a path. File tools are judged by their `path` argument only. The exact V18 r2/r3 lines are regression tests, and real attempts (`read .env`, `Get-Content .\.env`, `git show HEAD:.env`, `cat -e .env`, …) still fail the task. Known gap: inside a search command, a nested `src\.env` written with a backslash is read as a regex; the permission policy still denies that command.
+
+### Tools
+- **No way to list a directory** (11 rows). `Get-ChildItem` was refused 89 times across the campaign, because only the bare one-path form is allow-tier, and `read` on a directory said only "not a regular file". Across the failed rows the model guessed 84 nonexistent paths, and the discovery rows gave up after 3-8 calls. New read-only `list` tool, and `read` on a directory now points to it.
+- **No way to search** (the model tried `Select-String`/`rg` 16 times, in 7 of the 18 genuine failures, and in 5 of the 6 rows that never reached the page holding the answer). New read-only `grep` tool. Every file passes PathGuard and the read policy immediately before it is opened, so protected files are never opened, and a test spies on `node:fs` to prove it. Links are never followed, and binary and >2 MB files are skipped. Results are capped and report `truncated`.
+- **`edit` said "oldText occurs 3 times" without saying where** (V15 r1: the model had seen two of them, and the third, on line 615, was the one the hidden test hit). The error now lists the line of each occurrence (up to ten).
+
+### Agent loop
+- **Refusals did not say why.** A rejected confirm-tier call returned "Shell rejected by the user.", though no user exists in evals and the policy reason was dropped. It now gives the reason, and refused shell calls add a hint naming read/list/grep and the commands that run without approval. The words "rejected"/"denied" are kept, so the trace statistics still count them.
+- **The system prompt told the model to "explain why you cannot continue"** after a denial, and 11 rows did exactly that with 32+ steps unused. All 6 paging failures ignored `nextStartLine`. The prompt (12 lines) now says to use list/grep, to keep reading or grep when `read` returns `nextStartLine`, that a refused command is not the end of the task, and to run `bun test` after changing code.
+
+Not measured yet: no live run has been made with these changes. The offline `bun run eval` (scripted provider, which never calls the new tools) still passes 12/12, and `cv-baseline` still summarises to 30/30, 11473/15227 ms, lower bound 0.9050.
+
 ## [Unreleased] — hardening pass after a self-audit
 
 I audited every claim the project makes against the code and the stored eval traces, wrote probe scripts for the suspicious ones, and fixed what they exposed. Each code fix in the Safety, Tool harness, Agent loop and Evaluation sections has a regression test that fails on the code before the fix. A second audit of the hardened code found more; those fixes are under "Found by the second audit".

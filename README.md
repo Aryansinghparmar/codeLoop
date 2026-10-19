@@ -18,7 +18,7 @@
 
 ## What it is
 
-Give CodeLoop a coding task ("fix the off-by-one and run the test"). It loops: ask the model, run the tool calls the model requests (read, write, exact edit, shell), feed the results back, and stop when the model answers without calling a tool. Every tool call passes the permission policy first, and every file-tool call also passes a path guard. The whole loop can be measured with an offline and a live evaluation suite.
+Give CodeLoop a coding task ("fix the off-by-one and run the test"). It loops: ask the model, run the tool calls the model requests (read, write, exact edit, list, grep, shell), feed the results back, and stop when the model answers without calling a tool. Every tool call passes the permission policy first, and every file-tool call also passes a path guard. The whole loop can be measured with an offline and a live evaluation suite.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Give CodeLoop a coding task ("fix the off-by-one and run the test"). It loops: a
               │                   ├─► LlmProvider.complete ─► OpenAI Responses API (official SDK)
               │                   │        no tool calls? ─► done ────────────────┘
               │                   └─► ToolRegistry.execute(call)
-              │                            └─► tool: read · write · edit · shell
+              │                            └─► tool: read · write · edit · list · grep · shell
               │                                 ├─ PathGuard.resolveInside  (realpathSync containment)
               └──────── confirm ◄───────────────├─ PermissionPolicy.evaluate (allow · confirm · deny)
                                                 └─ filesystem / NativeProcessRunner (scrubbed env, tree kill)
@@ -40,7 +40,16 @@ Give CodeLoop a coding task ("fix the off-by-one and run the test"). It loops: a
 |---|---|
 | `src/agent/` | `AgentLoop`: the loop and its stop conditions. Done = no tool calls. It also stops at the step limit, on the same failure 3×, when the USD budget is hit, or on a provider error. |
 | `src/llm/` | `LlmProvider` interface. `OpenAiResponsesProvider` adapter on the official `openai` SDK. `ScriptedProvider` and `MockProvider` for offline tests. Price table. |
-| `src/tools/` | Tool contract, registry, and the `read`, `write`, `edit` (exact single match) and `shell` tools. One shared, fail-closed `authorize()` step. |
+| `src/tools/` | Tool contract, registry, and the tools below. One shared, fail-closed `authorize()` step. |
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `read` | `path`, `startLine?`, `endLine?` | Numbered lines of a text file, up to a size cap per call; `nextStartLine` says where the file continues. 2 MB and binary files refused. |
+| `write` | `path`, `content` | Creates or replaces a file. |
+| `edit` | `path`, `oldText`, `newText` | Replaces one exact block. If `oldText` occurs more than once, the error lists the line of each occurrence. |
+| `list` | `path? = "."`, `recursive?`, `maxEntries?` (default 200, max 500) | Read-only directory listing, breadth-first, directories first. Protected entries are named `(protected)` but never entered; links are not followed; `.git`, `node_modules` and `dist` are not descended into. |
+| `grep` | `pattern`, `path? = "."`, `ignoreCase?`, `literal?`, `maxResults?` (default 50, max 100) | Read-only content search: `path:line: text` for each matching line (JavaScript regex, or plain text with `literal`). Same walk as `list`, at most 1000 files; binary and >2 MB files skipped. |
+| `shell` | `command`, `timeoutMs?` | One command, classified by the permission policy. A refusal says why and what still works. |
 | `src/permissions/` | `PathGuard` (project-root containment via `realpathSync.native`, protected paths). `PermissionPolicy` (a named rule table: deny → confirm → allow, default confirm). |
 | `src/context/` | `ContextManager`: two-stage compaction under a 32K-token budget. Stage 1 trims to a recent window at turn boundaries; stage 2 masks old tool outputs. |
 | `src/evaluation/` | Fixed task suite, runner, test-executing grader, live/repeat CLIs, offline summariser, context benchmark. |
@@ -87,7 +96,7 @@ Read [`evals/published/README.md`](evals/published/README.md) before quoting the
 ## Safety model, and its limits
 
 What it does:
-- **Path containment (file tools).** Every path given to `read`, `write` or `edit` is resolved with `realpathSync.native` (so symlinks and junctions are followed) and must stay inside the project root. `.env`, `.git`, keys and system paths are always denied, and NTFS alternate streams are rejected.
+- **Path containment (file tools).** Every path given to `read`, `write`, `edit`, `list` or `grep` is resolved with `realpathSync.native` (so symlinks and junctions are followed) and must stay inside the project root. `.env`, `.git`, keys and system paths are always denied, and NTFS alternate streams are rejected. `list` and `grep` authorize their start directory as a read, and also pass every entry they walk through `PathGuard.resolveInside`: protected entries and links are never entered, and `grep` checks each file again (PathGuard plus the read policy) immediately before opening it, so `.env` is never opened even when it would match. A test spies on `node:fs` to prove it.
 - **Three permission tiers.**
   - **allow:** read-only commands (`git status/diff/log/show`, plain `ls`/`dir`, `pwd`, plain `echo`, `tsc --noEmit`) written in plain ASCII with no quoting or escapes, where every argument also passes PathGuard; edits inside `src/` and `tests/`; and creating new non-config files.
   - **confirm:** anything that runs project code (`bun test`, `bun run`, `node`); chaining, redirection, quoting, wildcards and variables; edits to config files, or overwriting existing files outside `src/` and `tests/`.
@@ -99,7 +108,7 @@ What it does:
 What it is not: **a sandbox.** Shell classification is regex-based and can be evaded. Code you approve runs with your user's permissions. Allow-tier `git` commands honour the repository's own git config. Token counts in compaction are `chars/4` estimates. For untrusted repositories, run it in a container or VM. A project's `.env` is read only for `CODELOOP_*`, `OPENAI_API_KEY` and `OPENAI_MODEL`. Anything else (`OPENAI_BASE_URL`, proxies, TLS settings) must be set in your shell.
 
 ## Limitations and next steps
-- No read-only search tool (grep/glob/list), so code search goes through shell and often needs approval. The slowest runs (a rename task, up to 77 s) are spent guessing file paths. The P95 sample itself is a run with no failed calls, so it reflects provider latency.
+- The read-only `list` and `grep` tools were added after the first v2 campaign, where 12 of its 33 failures came from not being able to list or search (see `CHANGELOG.md`). Their effect has not been measured with a new live run yet. In the earlier test-graded run, the slowest runs (a rename task, up to 77 s) were spent guessing file paths; its P95 sample is a run with no failed calls, so it reflects provider latency. `grep` runs the model's regex in-process with no time limit, so a pathological pattern can stall a call (a denial of service, not a leak).
 - Loop detection only catches identical repeated *failures*, not cycles of successful calls.
 - No streaming output. Compaction does not summarise with an LLM.
 - The eval tasks are small and correlated. A larger multi-file task set with pass@k is the next step for measurement.
