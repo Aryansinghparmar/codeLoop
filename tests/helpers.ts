@@ -7,5 +7,6 @@ export async function temporaryRoot(): Promise<string> {
 }
 
 export async function removeRoot(root: string): Promise<void> {
-  await rm(root, { recursive: true, force: true });
+  // Retries cover EBUSY on Windows, where a virus scanner or indexer can briefly hold a just-written file.
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
